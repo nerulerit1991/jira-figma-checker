@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "description": "Reusable checks for common behavior shared across the site's pages. Keep page-specific acceptance criteria in each ticket's tests instead.",
+  "cases": [
+    { "id": "G01", "title": "Page loads without browser or first-party request errors", "covers": "Successful page response, uncaught JavaScript errors, and failed same-origin resources." },
+    { "id": "G02", "title": "Shared navigation links have working destinations", "covers": "Visible navigation links have destinations and same-origin pages respond successfully." },
+    { "id": "G03", "title": "Visible links and controls are usable", "covers": "Interactive controls have accessible names, links have destinations, and keyboard focus can reach controls." },
+    { "id": "G04", "title": "Basic page accessibility checks pass", "covers": "Images have alt attributes and headings follow a sensible order." },
+    { "id": "G05", "title": "Forms show validation without submitting real data", "covers": "When a form exists, submitting invalid or empty required fields shows validation and does not create records or send messages." },
+    { "id": "G06", "title": "Page has no horizontal overflow at common viewport sizes", "covers": "The page remains within the viewport at desktop, tablet, and mobile widths." },
+    { "id": "G07", "title": "Async form actions do not submit twice on a rapid double click", "covers": "For an available POST form, rapid repeat clicks do not launch duplicate writes. Test requests are blocked before reaching the server." }
+  ]
+}

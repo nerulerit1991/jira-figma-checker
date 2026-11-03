@@ -1,0 +1,43 @@
+# Dependencies and build output (rebuilt per machine / OS with `npm install` and `npm run build`)
+node_modules/
+dist/
+
+# Project-local RTK binaries (macOS/Linux only)
+.tools/
+
+# Secrets: each person creates their own .env with `npm run setup`
+.env
+.env.*
+!.env.example
+
+# App data: tickets, screenshots, Figma downloads, login sessions (data/*/.auth/) and per-user settings.
+# Only the folder placeholder and the shared global test cases are committed.
+data/*
+!data/.gitkeep
+!data/global-test-cases/
+!data/global-test-cases/**
+
+# Playwright output
+test-results/
+playwright-report/
+blob-report/
+.last-run.json
+/SMOKE-*/
+
+# Claude Code: personal settings stay local (launch.json and .mcp.json are shared)
+.claude/settings.local.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp

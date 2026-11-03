@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Opening authorization…</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #16151c; color: #f2f1f7; font: 14px system-ui, sans-serif; }
+      main { max-width: 420px; padding: 24px; text-align: center; }
+      p { color: #9b9aab; line-height: 1.5; }
+      a { color: #9eff00; }
+      .code { margin: 18px 0 6px; font: 600 28px/1.2 ui-monospace, Menlo, monospace; letter-spacing: 0.08em; color: #f2f1f7; }
+      button { margin-top: 14px; padding: 10px 18px; border: 0; border-radius: 8px; background: #9eff00; color: #000; font: 600 14px system-ui, sans-serif; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <strong id="title">Preparing authorization…</strong>
+      <p id="message">Waiting for the MCP login to provide its authorization page.</p>
+      <div id="device" hidden>
+        <div class="code" id="code"></div>
+        <button id="continue" type="button">Copy code and continue</button>
+      </div>
+      <a id="fallback" hidden>Open authorization page</a>
+    </main>
+    <script>
+      const target = new URLSearchParams(location.search).get('target');
+      const title = document.querySelector('#title');
+      const message = document.querySelector('#message');
+      const fallback = document.querySelector('#fallback');
+      const label = target === 'figma' ? 'Figma' : target === 'jira' ? 'Jira' : target === 'codex' ? 'Codex' : 'connection';
+      const deadline = Date.now() + 10 * 60 * 1000;
+
+      async function poll() {
+        while (Date.now() < deadline) {
+          try {
+            const response = await fetch('/api/connections/jobs', { cache: 'no-store' });
+            const jobs = await response.json();
+            const job = jobs[target];
+            // Codex device sign-in: show the one-time code, then continue to the page where it is entered.
+            if (target === 'codex' && job?.url && job?.code) {
+              const authUrl = new URL(job.url);
+              if (authUrl.protocol !== 'https:') throw new Error('The authorization URL must use HTTPS.');
+              title.textContent = 'Your Codex sign-in code';
+              message.textContent = 'Enter this code on the OpenAI page. It expires in 15 minutes.';
+              document.querySelector('#code').textContent = job.code;
+              document.querySelector('#device').hidden = false;
+              document.querySelector('#continue').onclick = async () => {
+                try { await navigator.clipboard.writeText(job.code); } catch { /* copy is optional */ }
+                location.href = authUrl.href;
+              };
+              return;
+            }
+            if (job?.url && target !== 'codex') {
+              const authUrl = new URL(job.url);
+              if (authUrl.protocol !== 'https:') throw new Error('The authorization URL must use HTTPS.');
+              title.textContent = `Opening ${label} authorization…`;
+              message.textContent = 'Continue in the authorization page, then return to the app.';
+              fallback.href = authUrl.href;
+              fallback.hidden = false;
+              location.replace(authUrl.href);
+              return;
+            }
+            if (job?.state === 'error') {
+              title.textContent = 'Authorization could not start';
+              message.textContent = job.message || 'Return to the app and try Reconnect again.';
+              return;
+            }
+            if (job?.state === 'done') {
+              title.textContent = `${label} login finished`;
+              message.textContent = 'Return to the app while it checks the connection.';
+              return;
+            }
+          } catch (error) {
+            message.textContent = error.message || 'Waiting for the app…';
+          }
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        }
+        title.textContent = 'Authorization link not received';
+        message.textContent = 'Return to the app and use the Open page link to continue.';
+      }
+
+      poll();
+    </script>
+  </body>
+</html>
