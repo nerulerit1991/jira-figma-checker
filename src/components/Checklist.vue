@@ -1,27 +1,21 @@
 <script setup>
 import { computed } from 'vue';
-import { verifyByOf, testStatusOf } from '../../server/checklist.js';
+import { verifyByOf } from '../../server/checklist.js';
 
 const props = defineProps({
   items: { type: Array, required: true },
   check: { type: Object, default: null },
-  // The ticket's Playwright tests (readTests()); Playwright items take their result from these.
-  tests: { type: Object, default: null },
   showScore: { type: Boolean, default: true },
 });
 
-// Callers pass the items of one step (App.vue splits them by verifyBy). Every row as { state: pass | fail | skip | todo, evidence, confidence? } from the step that verifies it.
+// Live items (judged by the check) or not-testable items (manual QA); Playwright items are listed with their tests.
+// Every row as { state: pass | fail | skip | todo, evidence, confidence? }.
 const rows = computed(() => {
   const results = new Map((props.check?.results || []).map((r) => [r.id, r]));
   return props.items.map((item) => {
     const verifyBy = verifyByOf(item);
     if (verifyBy === 'not-testable') {
       return { ...item, verifyBy, state: 'skip', evidence: item.reason || 'Cannot be verified automatically; check it manually.' };
-    }
-    if (verifyBy === 'playwright') {
-      const t = testStatusOf(item.id, props.tests);
-      const state = { passed: 'pass', failed: 'fail', skipped: 'skip' }[t.status] || 'todo';
-      return { ...item, verifyBy, state, evidence: t.detail };
     }
     const r = results.get(item.id);
     return { ...item, verifyBy, state: r ? (r.passed ? 'pass' : 'fail') : 'todo', evidence: r?.evidence, confidence: r?.confidence };

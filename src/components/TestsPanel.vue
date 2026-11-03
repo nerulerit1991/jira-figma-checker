@@ -5,6 +5,8 @@ import globalTestCatalog from '../../data/global-test-cases/cases.json';
 const props = defineProps({
   tests: { type: Object, default: null },
   globalTests: { type: Object, default: () => ({ cases: [], results: null }) },
+  // Acceptance items meant for Playwright that no test covers yet; listed under Functionality as gaps.
+  uncovered: { type: Array, default: () => [] },
 });
 
 const FILE_LABELS = { 'behavior.spec.js': 'Functionality', 'api.spec.js': 'API & health' };
@@ -92,15 +94,23 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
         <span v-if="groupFor('behavior.spec.js')" class="score-chip" :class="groupFor('behavior.spec.js').items.some((r) => r.status === 'failed') ? 'bad' : 'good'">{{ sectionScore(groupFor('behavior.spec.js').items) }}</span>
         <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
       </summary>
-      <ul v-if="groupFor('behavior.spec.js')" class="checklist suite-list">
-        <li v-for="(r, i) in groupFor('behavior.spec.js').items" :key="i" :class="r.status === 'passed' ? 'pass' : r.status === 'failed' ? 'fail' : r.status === 'skipped' ? 'skip' : 'todo'">
+      <ul v-if="groupFor('behavior.spec.js') || uncovered.length" class="checklist suite-list">
+        <li v-for="(r, i) in groupFor('behavior.spec.js')?.items || []" :key="i" :class="r.status === 'passed' ? 'pass' : r.status === 'failed' ? 'fail' : r.status === 'skipped' ? 'skip' : 'todo'">
           <span class="mark" :aria-label="r.status"><svg v-if="statusSvg(r.status) === 'check'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7" /></svg><svg v-else-if="statusSvg(r.status) === 'cross'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg><svg v-else-if="statusSvg(r.status) === 'skip'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 12h12" /></svg></span>
           <div class="row-body"><div class="item">{{ r.title }}</div><pre v-if="r.error" class="test-error">{{ r.error }}</pre><div v-if="r.skipReason" class="evidence">Skipped: {{ r.skipReason }}</div></div>
           <div class="row-tags"><span v-if="r.durationMs != null" class="tag">{{ seconds(r.durationMs) }}</span></div>
         </li>
+        <li v-for="item in uncovered" :key="item.id" class="todo">
+          <span class="mark" aria-label="no test"></span>
+          <div class="row-body"><div class="item">[{{ item.id }}] {{ item.item }}</div><div class="evidence">No test covers this item. Regenerate the tests.</div></div>
+          <div class="row-tags"><span class="tag">no test</span></div>
+        </li>
       </ul>
       <p v-else class="hint suite-empty">{{ tests ? 'No ticket-specific functionality tests were generated.' : 'Generate ticket-specific tests to see functionality checks.' }}</p>
     </details>
+
+    <!-- Acceptance items no test can verify (App.vue). -->
+    <slot name="acceptance" />
 
     <template v-if="tests?.notes?.length">
       <p class="label">Not automated</p>

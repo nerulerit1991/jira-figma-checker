@@ -145,17 +145,24 @@ const sessionNote = computed(() => {
     ? `Session saved ${formatDate(login.value.sessionSavedAt)}; runs reuse it until it expires.${otp}`
     : `No saved session: the next run signs in.${otp}`;
 });
+// Why the last sign-in failed (Sign in now or a run), shown beside the toggle: the request's own error,
+// else the failed result the server saved. Cleared when a sign-in starts.
+const signInError = ref('');
+const loginError = computed(() => {
+  if (sessionBusy.value) return '';
+  if (signInError.value) return signInError.value;
+  return login.value?.last && !login.value.last.ok ? login.value.last.message : '';
+});
 async function signInNow() {
   const key = selectedKey.value;
   sessionBusy.value = true;
-  error.value = '';
+  signInError.value = '';
   try {
     const settings = await api.signIn(key);
     if (selectedKey.value !== key) return;
     applyLogin(settings);
-    if (settings.last && !settings.last.ok) error.value = settings.last.message;
   } catch (e) {
-    if (selectedKey.value === key) error.value = e.message;
+    if (selectedKey.value === key) signInError.value = e.message;
   } finally {
     sessionBusy.value = false;
   }
@@ -221,10 +228,10 @@ const checklistScore = computed(() => {
   const results = new Map((check.value?.results || []).map((r) => [r.id, r]));
   return { passed: liveItems.value.filter((i) => results.get(i.id)?.passed).length, total: liveItems.value.length };
 });
-const acceptanceTestsScore = computed(() => ({
-  passed: playwrightItems.value.filter((i) => testStatusOf(i.id, tests.value).status === 'passed').length,
-  total: playwrightItems.value.length,
-}));
+// Playwright items no generated test covers; Functionality lists them as gaps.
+const uncoveredItems = computed(() =>
+  tests.value ? playwrightItems.value.filter((i) => testStatusOf(i.id, tests.value).status === 'no-test') : [],
+);
 // Older checks have only the property table; newer ones have the per-category design checklist.
 const designScore = computed(() => {
   const cats = check.value?.designChecklist;
@@ -464,6 +471,7 @@ async function loadTicket(key) {
   ticket.value = jira.value = figma.value = check.value = checkErrors.value = tests.value = null;
   figmaSaved.value = null;
   applyLogin(null);
+  signInError.value = '';
   loginNoteSettled.value = true;
   // Cleared so a link typed for the previous ticket is never sent for this one while it loads.
   figmaUrl.value = pageUrl.value = '';
@@ -1031,6 +1039,7 @@ onMounted(async () => {
                       <span class="switch-track" aria-hidden="true"></span>
                       Requires login
                     </label>
+                    <span v-if="loginOn && loginError" class="login-error" role="alert">{{ loginError }}</span>
                   </div>
                   <Transition name="login-note">
                     <p v-show="loginOn" class="login-note" :class="{ settled: loginNoteSettled }">
@@ -1161,31 +1170,24 @@ onMounted(async () => {
               </div>
               <p v-if="!pageUrl" class="hint">Enter the live page URL under Details / Data</p>
               <p class="tests-cost-note">Generating or regenerating test scripts uses AI tokens; running saved tests does not.</p>
-              <details v-if="playwrightItems.length" class="accordion">
-                <summary>
-                  <span class="acc-title">Acceptance items</span>
-                  <span v-if="tests?.results" class="score-chip" :class="scoreClass(acceptanceTestsScore)">
-                    {{ acceptanceTestsScore.passed }}/{{ acceptanceTestsScore.total }}
-                  </span>
-                  <span v-else class="score-chip">{{ playwrightItems.length }} items</span>
-                  <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
-                </summary>
-                <Checklist :items="playwrightItems" :tests="tests" :show-score="false" />
-              </details>
-              <details v-if="notTestableItems.length" class="accordion">
-                <summary>
-                  <span class="acc-title">Not testable</span>
-                  <span class="score-chip">{{ notTestableItems.length }} manual QA</span>
-                  <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
-                </summary>
-                <Checklist :items="notTestableItems" :show-score="false" />
-              </details>
               <div class="burst-host">
                 <TokenBurst :burst="burst" target="tests" />
                 <TestsPanel
                   :tests="tests"
                   :global-tests="globalTests"
-                />
+                  :uncovered="uncoveredItems"
+                >
+                  <template #acceptance>
+                    <details v-if="notTestableItems.length" class="accordion suite-accordion">
+                      <summary>
+                        <span class="acc-title">Not testable</span>
+                        <span class="score-chip">{{ notTestableItems.length }} manual QA</span>
+                        <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+                      </summary>
+                      <Checklist :items="notTestableItems" :show-score="false" />
+                    </details>
+                  </template>
+                </TestsPanel>
               </div>
             </section>
           </div>
@@ -1199,7 +1201,6 @@ onMounted(async () => {
                   { label: 'Checklist', sc: check && checklistScore.total ? checklistScore : null },
                   { label: 'Design match', sc: designScore },
                   { label: 'Responsive', sc: responsiveScore },
-                  { label: 'Acceptance tests', sc: tests?.results && acceptanceTestsScore.total ? acceptanceTestsScore : null },
                   { label: 'Functional & API', sc: testsScore },
                 ].filter((r) => r.sc)" :key="row.label" class="score-row" :class="scoreClass(row.sc)">
                   <div class="score-row-top">

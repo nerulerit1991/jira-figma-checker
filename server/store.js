@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DATA_DIR } from './config.js';
+import { itemsVerifiedBy } from './checklist.js';
 
 // Each ticket lives in data/<KEY>/ with ticket.json (links), jira.json, figma.json, check.json.
 const SAFE_KEY = /^[A-Z][A-Z0-9_]*-\d+$/;
@@ -169,7 +170,9 @@ export async function listTickets() {
         readJson(key, 'figma'),
         readJson(key, 'check'),
       ]);
-      const results = check?.results || [];
+      // Same score as the ticket's Checklist: only items the live check verifies (older checks judged them all).
+      const live = new Set(itemsVerifiedBy(jira?.checklist, 'live').map((i) => i.id));
+      const results = (check?.results || []).filter((r) => !jira?.checklist || live.has(r.id));
       return {
         key,
         summary: jira?.summary || null,

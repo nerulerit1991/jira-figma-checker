@@ -598,6 +598,8 @@ li.skip .item { color: var(--muted); }
 
 /* Test account for a page behind a sign-in: under the Page URL in card 01 */
 .login-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+/* Why the last sign-in failed, beside the toggle. */
+.login-error { flex: 1 1 200px; min-width: 0; color: var(--red); font-size: 0.76rem; overflow-wrap: anywhere; }
 .login-toggle {
   display: inline-flex; align-items: center; gap: 8px; cursor: pointer; white-space: nowrap;
   font-family: var(--mono); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
