@@ -1,11 +1,17 @@
+import { itemsVerifiedBy } from './checklist.js';
+
 // Errors-only view of a UI check, saved as data/<KEY>/check-errors.json. A re-check sends only these
 // to the agent (with the matching slice of page and Figma data) instead of the whole page and design.
 
-/** Everything that failed in a check.json. Figma-file mistakes ("source": "figma") are not live errors. */
-export function buildCheckErrors(check) {
+/**
+ * Everything that failed in a check.json. Figma-file mistakes ("source": "figma") are not live errors.
+ * With the ticket's `checklist`, only items the live check verifies count; older checks also judged Playwright items.
+ */
+export function buildCheckErrors(check, checklist) {
   if (!check) return null;
-  const checklist = (check.results || [])
-    .filter((r) => !r.passed)
+  const live = checklist && new Set(itemsVerifiedBy(checklist, 'live').map((i) => i.id));
+  const checklistErrors = (check.results || [])
+    .filter((r) => !r.passed && (!live || live.has(r.id)))
     .map(({ id, item, evidence }) => ({ id, item, evidence }));
   const design = (check.designChecklist || [])
     .filter((c) => !c.passed)
@@ -18,8 +24,8 @@ export function buildCheckErrors(check) {
     url: check.url,
     checkedAt: check.recheckedAt || check.checkedAt,
     compareViewport: check.designMatch?.comparedAt || null,
-    count: checklist.length + design.length + responsive.length,
-    checklist,
+    count: checklistErrors.length + design.length + responsive.length,
+    checklist: checklistErrors,
     design,
     designRows,
     responsive,

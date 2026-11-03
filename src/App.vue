@@ -12,6 +12,7 @@ import FrameSelectDialog from './components/FrameSelectDialog.vue';
 import FigmaProjectDialog from './components/FigmaProjectDialog.vue';
 import FigmaSaveProjectDialog from './components/FigmaSaveProjectDialog.vue';
 import { parseFigmaUrl } from '../server/figma.js';
+import { itemsVerifiedBy, testStatusOf } from '../server/checklist.js';
 import DesignMatch from './components/DesignMatch.vue';
 import DesignChecklist from './components/DesignChecklist.vue';
 import ResponsiveReport from './components/ResponsiveReport.vue';
@@ -212,10 +213,18 @@ const frameSelectDialog = ref(null);
 const figmaProjectDialog = ref(null);
 const figmaSaveDialog = ref(null);
 
+// Each acceptance item is shown in the card of the step that verifies it (see server/checklist.js).
+const liveItems = computed(() => itemsVerifiedBy(jira.value?.checklist, 'live'));
+const playwrightItems = computed(() => itemsVerifiedBy(jira.value?.checklist, 'playwright'));
+const notTestableItems = computed(() => itemsVerifiedBy(jira.value?.checklist, 'not-testable'));
 const checklistScore = computed(() => {
-  const r = check.value?.results;
-  return r?.length ? { passed: r.filter((x) => x.passed).length, total: r.length } : { passed: 0, total: 0 };
+  const results = new Map((check.value?.results || []).map((r) => [r.id, r]));
+  return { passed: liveItems.value.filter((i) => results.get(i.id)?.passed).length, total: liveItems.value.length };
 });
+const acceptanceTestsScore = computed(() => ({
+  passed: playwrightItems.value.filter((i) => testStatusOf(i.id, tests.value).status === 'passed').length,
+  total: playwrightItems.value.length,
+}));
 // Older checks have only the property table; newer ones have the per-category design checklist.
 const designScore = computed(() => {
   const cats = check.value?.designChecklist;
@@ -1071,16 +1080,16 @@ onMounted(async () => {
               <p v-if="check?.warning" class="warn-text">{{ check.warning }}</p>
 
               <template v-if="jira?.checklist?.length">
-                <details class="accordion">
+                <details v-if="liveItems.length" class="accordion">
                   <summary>
                     <span class="acc-title">Acceptance checklist</span>
                     <span v-if="check" class="score-chip" :class="scoreClass(checklistScore)">
                       {{ checklistScore.passed }}/{{ checklistScore.total }}
                     </span>
-                    <span v-else class="score-chip">{{ jira.checklist.length }} items</span>
+                    <span v-else class="score-chip">{{ liveItems.length }} items</span>
                     <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
                   </summary>
-                  <Checklist :items="jira.checklist" :check="check" :show-score="false" />
+                  <Checklist :items="liveItems" :check="check" :show-score="false" />
                 </details>
 
                 <details v-if="check?.designChecklist?.length || check?.designMatch?.rows?.length" class="accordion">
@@ -1152,6 +1161,25 @@ onMounted(async () => {
               </div>
               <p v-if="!pageUrl" class="hint">Enter the live page URL under Details / Data</p>
               <p class="tests-cost-note">Generating or regenerating test scripts uses AI tokens; running saved tests does not.</p>
+              <details v-if="playwrightItems.length" class="accordion">
+                <summary>
+                  <span class="acc-title">Acceptance items</span>
+                  <span v-if="tests?.results" class="score-chip" :class="scoreClass(acceptanceTestsScore)">
+                    {{ acceptanceTestsScore.passed }}/{{ acceptanceTestsScore.total }}
+                  </span>
+                  <span v-else class="score-chip">{{ playwrightItems.length }} items</span>
+                  <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+                </summary>
+                <Checklist :items="playwrightItems" :tests="tests" :show-score="false" />
+              </details>
+              <details v-if="notTestableItems.length" class="accordion">
+                <summary>
+                  <span class="acc-title">Not testable</span>
+                  <span class="score-chip">{{ notTestableItems.length }} manual QA</span>
+                  <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+                </summary>
+                <Checklist :items="notTestableItems" :show-score="false" />
+              </details>
               <div class="burst-host">
                 <TokenBurst :burst="burst" target="tests" />
                 <TestsPanel
@@ -1168,9 +1196,10 @@ onMounted(async () => {
               <h3 class="widget-title">Scores</h3>
               <template v-if="check || testsScore">
                 <div v-for="row in [
-                  { label: 'Checklist', sc: check ? checklistScore : null },
+                  { label: 'Checklist', sc: check && checklistScore.total ? checklistScore : null },
                   { label: 'Design match', sc: designScore },
                   { label: 'Responsive', sc: responsiveScore },
+                  { label: 'Acceptance tests', sc: tests?.results && acceptanceTestsScore.total ? acceptanceTestsScore : null },
                   { label: 'Functional & API', sc: testsScore },
                 ].filter((r) => r.sc)" :key="row.label" class="score-row" :class="scoreClass(row.sc)">
                   <div class="score-row-top">

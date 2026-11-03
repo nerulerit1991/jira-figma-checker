@@ -25,6 +25,7 @@ import {
   fullFigmaLocation,
 } from './store.js';
 import { jiraPrompt, jiraChecklistPrompt, figmaPrompt, figmaBridgePrompt, checkPrompt, recheckPrompt } from './prompts.js';
+import { itemsVerifiedBy } from './checklist.js';
 import { buildCheckErrors, viewportsFor, errorSections, inSections, mergeRecheck } from './checkErrors.js';
 import { capturePage, VIEWPORTS } from './capture.js';
 import { parseFigmaUrl, withScheme } from './figma.js';
@@ -213,7 +214,8 @@ app.get('/api/tickets/:key', async (req, res) => {
   const fileKey = parseFigmaUrl(ticket.figmaUrl)?.fileKey || figma?.fileKey;
   const figmaSaved = fileKey ? (await listFullFigmaProjects()).find((p) => p.fileKey === fileKey) || null : null;
   // Checks saved before check-errors.json existed get their errors built on the fly.
-  const checkErrors = savedErrors || buildCheckErrors(check);
+  // Rebuilt from the check so items the Jira step now gives to Playwright or marks not testable drop out.
+  const checkErrors = check ? buildCheckErrors(check, jira?.checklist) : savedErrors;
   res.json({ ticket, jira, figma, check, checkErrors, tests, globalTests, figmaSaved, login });
 });
 
@@ -491,7 +493,7 @@ app.post('/api/tickets/:key/check', async (req, res) => {
     const page = await capturePage(url, path.join(DATA_DIR, key), { desktopWidth, storageState: await prepareSession(key, url) });
     const { ai, ...figmaData } = figma || {};
     const { data, meta } = await runAgentJson({
-      ...checkPrompt({ url, checklist: jira.checklist, figma: figma && { ...figmaData, frameWidth }, page, compareViewport }),
+      ...checkPrompt({ url, checklist: itemsVerifiedBy(jira.checklist, 'live'), figma: figma && { ...figmaData, frameWidth }, page, compareViewport }),
       images: page.viewports.flatMap((v) => v.tiles.map((t) => ({ mediaType: 'image/jpeg', base64: t.base64 }))),
       otherServers: (await getStatus()).all.map((s) => s.name),
     });
@@ -504,7 +506,7 @@ app.post('/api/tickets/:key/check', async (req, res) => {
       checkedAt: new Date().toISOString(),
       ai: meta,
     });
-    return { check, errors: await writeJson(key, 'check-errors', buildCheckErrors(check)) };
+    return { check, errors: await writeJson(key, 'check-errors', buildCheckErrors(check, jira.checklist)) };
   });
   res.json({ data: data.check, errors: data.errors });
 });
@@ -516,8 +518,9 @@ app.post('/api/tickets/:key/check/recheck', async (req, res) => {
   const url = requireUrl(req.body.url || pageUrl, 'Page URL');
   const check = await readJson(key, 'check');
   if (!check) throw httpError(400, 'Run Check UI first; there is no previous check to re-check.');
-  // Files saved before a field (e.g. designRows) existed get it from the check itself.
-  const errors = { ...buildCheckErrors(check), ...(await readJson(key, 'check-errors')) };
+  const jira = await readJson(key, 'jira');
+  // Built from the check, so items the Jira step gives to Playwright or marks not testable are not re-checked here.
+  const errors = buildCheckErrors(check, jira?.checklist);
   if (!errors.count && !errors.designRows.length) throw httpError(400, 'The last check has no errors to re-check.');
   const saved = await readJson(key, 'figma');
   const figma = saved?.specs?.length || saved?.typography?.length ? saved : null;
@@ -552,7 +555,7 @@ app.post('/api/tickets/:key/check/recheck', async (req, res) => {
       recheckedItems: errors.count,
       ai: meta,
     });
-    return { check: merged, errors: await writeJson(key, 'check-errors', buildCheckErrors(merged)) };
+    return { check: merged, errors: await writeJson(key, 'check-errors', buildCheckErrors(merged, jira?.checklist)) };
   });
   res.json({ data: data.check, errors: data.errors });
 });
