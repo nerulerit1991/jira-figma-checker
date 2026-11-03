@@ -334,6 +334,10 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px soli
 .via-tabs button { position: relative; height: 100%; padding: 0 10px; white-space: nowrap; border: 0; border-radius: 4px; background: transparent; color: var(--subtle); font-size: 0.72rem; font-weight: 500; line-height: 1; }
 .via-tabs button:hover { color: var(--text); }
 .via-tabs button.on { background: #9eff00; color: #000; }
+.via-row { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; margin-bottom: 8px; }
+.via-row .via-tabs { margin-bottom: 0; }
+.token-help { font-size: 0.72rem; color: var(--subtle); white-space: normal; }
+.token-help a { color: #9eff00; }
 .source-hint { margin-top: 6px; font-size: 0.76rem; color: var(--subtle); }
 .frame-hint { width: 100%; font-size: 0.82rem; color: var(--subtle); font-style: italic; height: 42px; display: flex; align-items: center; }
 .source-error { margin-top: 8px; padding: 8px 10px; border-radius: var(--radius); font-size: 0.78rem; color: #f3c4c4; background: var(--red-bg); border: 1px solid rgba(248, 113, 113, 0.35); }
@@ -618,6 +622,12 @@ li.skip .item { color: var(--muted); }
 .login-note-enter-active, .login-note-leave-active { overflow: hidden; transition: max-height 0.4s ease, margin-top 0.4s ease, opacity 0.4s ease, transform 0.4s ease; }
 .login-note-enter-from, .login-note-leave-to { max-height: 0; margin-top: 0; opacity: 0; transform: translateX(-24px); }
 .login-input { width: auto; flex: 1 1 0; min-width: 0; }
+/* Saved-session line under the login toggle: status text plus small Sign in now / Forget session buttons. */
+.session-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: 0.76rem; color: var(--subtle); }
+.session-row button.session-btn { height: 26px; padding: 0 10px; font-size: 0.74rem; }
+/* OTP / CAPTCHA pop-up: the CAPTCHA picture as the site drew it, then the input. */
+.challenge-image { display: block; max-width: 100%; margin: 10px 0 4px; border-radius: 6px; background: #fff; }
+.challenge-input { width: 100%; margin-top: 10px; }
 .nav-key { display: inline-flex; align-items: center; gap: 6px; }
 .nav-spinner { width: 10px; height: 10px; border-width: 1.5px; }
 

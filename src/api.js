@@ -39,6 +39,11 @@ export const api = {
   login: (key) => request(`${t(key)}/login`),
   // On: sign in with the .env test account before runs. Off: forget the ticket's login.
   setLogin: (key, on) => (on ? request(`${t(key)}/login`, { method: 'PUT', body: { useEnv: true } }) : request(`${t(key)}/login`, { method: 'DELETE' })),
+  // Signs in now and saves the session (a site with an OTP or CAPTCHA asks for it in the pop-up).
+  signIn: (key) => request(`${t(key)}/login/test`, { method: 'POST', body: {} }),
+  forgetSession: (key) => request(`${t(key)}/login/session`, { method: 'DELETE' }),
+  // The OTP or CAPTCHA typed for the sign-in step `id`; value null cancels the sign-in.
+  answerChallenge: (key, id, value) => request(`${t(key)}/login/challenge`, { method: 'POST', body: { id, value } }),
   screenshotUrl: (key, viewport, at) => `/api${t(key)}/screenshot/${viewport}?t=${encodeURIComponent(at)}`,
 };
 

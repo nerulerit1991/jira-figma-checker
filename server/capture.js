@@ -19,8 +19,19 @@ function summarizeDom() {
     return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
   };
   const text = (el) => (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 200);
+  // Where a link or button navigates to (its own href or an enclosing link's), so navigation criteria can be checked.
+  // Same-site targets are shortened to their path; "#" and javascript: are kept as written, since they do not navigate.
+  const target = (el) => {
+    const a = el.closest('a[href]');
+    if (!a) return undefined;
+    const raw = a.getAttribute('href').trim();
+    if (raw === '' || raw.startsWith('#') || /^javascript:/i.test(raw)) return raw.slice(0, 60) || '(empty)';
+    const url = new URL(a.href);
+    const shown = url.origin === location.origin ? url.pathname + url.search + url.hash : url.href;
+    return (a.target === '_blank' ? `${shown} (new tab)` : shown).slice(0, 150);
+  };
   const pick = (selector, limit) =>
-    [...document.querySelectorAll(selector)].filter(visible).slice(0, limit).map((el) => ({ tag: el.tagName.toLowerCase(), text: text(el) }));
+    [...document.querySelectorAll(selector)].filter(visible).slice(0, limit).map((el) => ({ tag: el.tagName.toLowerCase(), text: text(el), href: target(el) }));
 
   return {
     title: document.title,

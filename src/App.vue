@@ -6,6 +6,7 @@ import McpStatus from './components/McpStatus.vue';
 import Checklist from './components/Checklist.vue';
 import TicketNav from './components/TicketNav.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
+import SignInChallengeDialog from './components/SignInChallengeDialog.vue';
 import NewTicketDialog from './components/NewTicketDialog.vue';
 import FrameSelectDialog from './components/FrameSelectDialog.vue';
 import FigmaProjectDialog from './components/FigmaProjectDialog.vue';
@@ -134,6 +135,65 @@ async function refreshLogin(key) {
     // The toggle keeps its last known state.
   }
 }
+// The saved session: runs reuse it while it still gets past the login and sign in again once it does not.
+// On sites with an OTP or CAPTCHA, signing in asks for it in a pop-up (SignInChallengeDialog).
+const sessionBusy = ref(false);
+const sessionNote = computed(() => {
+  const otp = login.value?.humanCheck ? ' This site asks for an OTP or CAPTCHA each time it signs in again.' : '';
+  return login.value?.sessionSavedAt
+    ? `Session saved ${formatDate(login.value.sessionSavedAt)}; runs reuse it until it expires.${otp}`
+    : `No saved session: the next run signs in.${otp}`;
+});
+async function signInNow() {
+  const key = selectedKey.value;
+  sessionBusy.value = true;
+  error.value = '';
+  try {
+    const settings = await api.signIn(key);
+    if (selectedKey.value !== key) return;
+    applyLogin(settings);
+    if (settings.last && !settings.last.ok) error.value = settings.last.message;
+  } catch (e) {
+    if (selectedKey.value === key) error.value = e.message;
+  } finally {
+    sessionBusy.value = false;
+  }
+}
+async function forgetSessionNow() {
+  const key = selectedKey.value;
+  sessionBusy.value = true;
+  try {
+    const settings = await api.forgetSession(key);
+    if (selectedKey.value === key) applyLogin(settings);
+  } catch (e) {
+    if (selectedKey.value === key) error.value = e.message;
+  } finally {
+    sessionBusy.value = false;
+  }
+}
+// The OTP or CAPTCHA typed in the pop-up, or null (Cancel), for the sign-in step waiting on the open ticket.
+const challengeBusy = ref(false);
+async function answerChallenge(value) {
+  const key = selectedKey.value;
+  const pending = login.value?.challenge;
+  if (!pending) return;
+  challengeBusy.value = true;
+  try {
+    const settings = await api.answerChallenge(key, pending.id, value);
+    if (selectedKey.value === key) applyLogin(settings);
+  } catch (e) {
+    if (selectedKey.value === key) error.value = e.message;
+  } finally {
+    challengeBusy.value = false;
+  }
+}
+// While login is on or the ticket is busy (a run can turn login on by itself), re-read it every few seconds,
+// so a sign-in waiting for an OTP or CAPTCHA opens the pop-up.
+setInterval(() => {
+  const key = selectedKey.value;
+  if (!key || loginSaving.value || document.visibilityState !== 'visible') return;
+  if (loginOn.value || sessionBusy.value || ticketBusy(key)) refreshLogin(key);
+}, 2500);
 // Running jobs keyed "<ticket>:<action>", so work on one ticket never shows on another
 // and different actions on the same ticket (e.g. Jira and Figma) can run at once.
 const jobs = ref({});
@@ -830,6 +890,7 @@ onMounted(async () => {
               <div class="sources">
                 <div class="source">
                   <span class="field-label">Jira section</span>
+                  <div class="via-row">
                   <div class="via-tabs" role="tablist" aria-label="Read Jira from">
                     <button
                       v-for="tab in JIRA_TABS"
@@ -842,6 +903,11 @@ onMounted(async () => {
                     >
                       {{ tab.label }}
                     </button>
+                  </div>
+                  <span v-if="jiraVia === 'api'" class="token-help">
+                    Generate a token:
+                    <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer">id.atlassian.com › API tokens</a>
+                  </span>
                   </div>
                   <div class="inline-field">
                     <input id="jira-link" :value="ticket.jiraUrl" readonly />
@@ -879,6 +945,11 @@ onMounted(async () => {
                       {{ tab.label }}
                       <span v-if="tab.via === 'api'" class="tab-badge">free</span>
                     </label>
+                    <span v-if="figmaVia === 'api'" class="token-help">
+                      Generate a token:
+                      <a href="https://www.figma.com/" target="_blank" rel="noopener noreferrer">figma.com</a>
+                      › profile › Settings › Security › Generate new token
+                    </span>
                   </div>
                   <div class="inline-field">
                     <span v-if="figmaVia === 'bridge'" class="frame-hint">Select the frame in Figma</span>
@@ -957,6 +1028,11 @@ onMounted(async () => {
                       {{ loginNote }}
                     </p>
                   </Transition>
+                  <div v-if="loginOn && login?.hasPassword" class="session-row">
+                    <span>{{ sessionNote }}</span>
+                    <button class="ghost session-btn" :disabled="sessionBusy" @click="signInNow">{{ sessionBusy ? 'Signing in…' : 'Sign in now' }}</button>
+                    <button v-if="login.sessionSavedAt" class="ghost session-btn" :disabled="sessionBusy" @click="forgetSessionNow">Forget session</button>
+                  </div>
                 </div>
               </div>
 
@@ -1188,6 +1264,7 @@ onMounted(async () => {
     </main>
 
     <ConfirmDialog ref="confirmDialog" />
+    <SignInChallengeDialog :challenge="login?.challenge" :busy="challengeBusy" @submit="answerChallenge" @cancel="answerChallenge(null)" />
     <NewTicketDialog ref="newTicketDialog" :create="createTicket" />
     <FrameSelectDialog ref="frameSelectDialog" />
     <FigmaProjectDialog ref="figmaProjectDialog" />

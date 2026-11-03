@@ -7,7 +7,7 @@ import { runAgentJson, getMcpStatus } from './ai.js';
 import { setAgentProvider, getAgentProvider } from './agentSettings.js';
 import { getAgentUsage } from './agentUsage.js';
 import { readCodexAccount } from './codexAccount.js';
-import { getLoginSettings, saveLoginSettings, enableEnvLogin, removeLoginSettings, performLogin, prepareSession } from './login.js';
+import { getLoginSettings, saveLoginSettings, enableEnvLogin, removeLoginSettings, performLogin, prepareSession, forgetSession, answerChallenge } from './login.js';
 import {
   readJson,
   writeJson,
@@ -576,7 +576,20 @@ app.delete('/api/tickets/:key/login', async (req, res) => {
   res.json(await getLoginSettings(key));
 });
 
-// Signs in once to test the settings. No AI, no tokens.
+// Forgets the saved session; the next run signs in again. The login settings stay.
+app.delete('/api/tickets/:key/login/session', async (req, res) => {
+  const { key } = await requireTicket(req.params.key);
+  res.json(await forgetSession(key));
+});
+
+// The OTP or CAPTCHA the person typed for the sign-in step waiting on this ticket; { value: null } cancels it.
+app.post('/api/tickets/:key/login/challenge', async (req, res) => {
+  const { key } = await requireTicket(req.params.key);
+  answerChallenge(key, String(req.body?.id || ''), req.body?.value ?? null);
+  res.json(await getLoginSettings(key));
+});
+
+// Signs in once to test the settings (a site with an OTP or CAPTCHA asks for it in the app). No AI, no tokens.
 app.post('/api/tickets/:key/login/test', async (req, res) => {
   const { key, pageUrl } = await requireTicket(req.params.key);
   await once(`login:${key}`, () => performLogin(key, pageUrl));
