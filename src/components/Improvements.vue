@@ -53,16 +53,18 @@ const sorted = computed(() => [...props.items].sort((a, b) => (SEVERITY_ORDER[a.
 
 <style scoped>
 .improvements { list-style: none; margin: 0; padding: 12px; display: grid; gap: 10px; }
-.improvements > li { padding: 12px 14px; border: 1px solid var(--border); border-left-width: 3px; border-radius: var(--radius); background: var(--surface); }
-.sev-high { border-left-color: #ff4d5e !important; }
-.sev-medium { border-left-color: #fbbf24 !important; }
-.sev-low { border-left-color: var(--border-strong) !important; }
+/* No borders: each card is a soft tint of its severity colour, and the severity chip carries the colour. */
+.improvements > li { --sev: var(--muted); --sev-bg: rgba(155, 154, 171, 0.12); padding: 12px 14px; border: 0; border-radius: var(--radius); background: var(--surface); }
+.improvements > li.sev-high { --sev: #ff4d5e; --sev-bg: rgba(255, 77, 94, 0.14); }
+.improvements > li.sev-medium { --sev: #fbbf24; --sev-bg: rgba(251, 191, 36, 0.14); }
+.improvements > li.sev-low { --sev: #60a5fa; --sev-bg: rgba(96, 165, 250, 0.14); }
+.improvements > li.sev-high { background: linear-gradient(rgba(255, 77, 94, 0.05), rgba(255, 77, 94, 0.05)), var(--surface); }
+.improvements > li.sev-medium { background: linear-gradient(rgba(251, 191, 36, 0.04), rgba(251, 191, 36, 0.04)), var(--surface); }
 .imp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .imp-title { font-weight: 600; font-size: 0.9rem; flex: 1; min-width: 0; }
-.imp-sev { font-family: var(--mono); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 4px; }
-.sev-high .imp-sev { color: #ff4d5e; background: rgba(255, 77, 94, 0.12); }
-.sev-medium .imp-sev { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
-.sev-low .imp-sev { color: var(--muted); background: var(--inset); }
+.imp-sev { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 999px; font-family: var(--mono); font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--sev); background: var(--sev-bg); }
+.imp-sev::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.imp-head .tag { border: 0; background: var(--inset); }
 .imp-eli5 { margin: 8px 0 0; font-size: 0.88rem; line-height: 1.5; color: var(--text); }
 .imp-details { margin: 10px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 0.8rem; }
 .imp-details dt { color: var(--subtle); }
