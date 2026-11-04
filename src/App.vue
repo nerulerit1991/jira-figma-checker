@@ -706,6 +706,7 @@ async function generateTests() {
       if (!ok || selectedKey.value !== key) return;
     }
     const url = pageUrl.value;
+    noteRun('tests', status.value?.runs && [`Tests via ${runLabel('analysis')}`]);
     await run('tests', (key) => api.generateTests(key, url), (res) => {
       tests.value = res;
       showBurst('tests', res.ai);
@@ -1148,6 +1149,9 @@ onMounted(async () => {
               <div class="card-head tests-card-head">
                 <span class="step">03</span>
                 <h2>Functional &amp; API tests</h2>
+                <span v-if="clickedRuns.tests" class="run-chips">
+                  <span v-for="chip in clickedRuns.tests" :key="chip" class="run-chip" :title="chip" :class="{ busy: isBusy('tests') }">{{ chip }}</span>
+                </span>
                 <div class="tests-card-actions">
                   <button class="regen-tab" :disabled="!jira || !pageUrl || generatingTestsPending || isBusy('tests') || isBusy('run')" @click="generateTests">
                     <span v-if="isBusy('tests')" class="spinner" aria-hidden="true"></span>
