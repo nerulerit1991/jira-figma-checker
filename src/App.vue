@@ -1306,7 +1306,7 @@ onMounted(async () => {
                 <TokenBurst :burst="burst" target="improvements" />
                 <template v-if="improvements">
                   <p v-if="improvements.summary" class="imp-summary">{{ improvements.summary }}</p>
-                  <details v-if="improvements.items?.length" class="accordion" open>
+                  <details v-if="improvements.items?.length" class="accordion">
                     <summary>
                       <span class="acc-title">Suggestions</span>
                       <span class="score-chip" :class="{ bad: improvementCounts.high }">{{ improvementCounts.total }}</span>
