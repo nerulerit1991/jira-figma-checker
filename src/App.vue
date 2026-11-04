@@ -846,8 +846,12 @@ onMounted(async () => {
     <!-- Sidebar: brand, tickets, connections -->
     <aside class="sidebar">
       <div class="brand">
-        <img class="logo" src="/favicon.svg" alt="" />
-        <span class="brand-name">Figplayra</span>
+        <!-- Wordmark "C{}DE": the O is a pair of code braces (same braces as public/favicon.svg). -->
+        <span class="logo-word" role="img" aria-label="Figplayra">
+          <span aria-hidden="true">C</span><svg class="logo-o" viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M16 4c-5 0-7 2-7 7v4c0 3-2 5-5 5 3 0 5 2 5 5v4c0 5 2 7 7 7M24 4c5 0 7 2 7 7v4c0 3 2 5 5 5-3 0-5 2-5 5v4c0 5-2 7-7 7" fill="none" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg><span aria-hidden="true">DE</span>
+        </span>
       </div>
 
       <div class="ticket-actions">

@@ -49,12 +49,9 @@ p { margin: 0; }
   background: var(--sidebar); border-right: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
-.logo {
-  /* public/favicon.svg: a Figma frame around a Playwright play button */
-  width: 30px; height: 30px; border-radius: 8px; flex: none; display: block;
-  box-shadow: 0 4px 14px rgba(123, 108, 246, 0.35);
-}
-.brand-name { font-weight: 700; font-size: 1.05rem; letter-spacing: -0.02em; }
+.logo-word { display: inline-flex; align-items: center; font-weight: 900; font-size: 1.6rem; line-height: 1; letter-spacing: 0.02em; color: var(--text); }
+/* The O: code braces in the app's lime */
+.logo-o { height: 0.78em; width: auto; margin: 0 0.04em; color: var(--green); }
 .ticket-actions { display: flex; gap: 8px; }
 .ticket-actions button { border-radius: 4px; }
 .ticket-actions .reset-btn { height: 22px; padding: 0 8px; font-size: 0.7rem; font-weight: 500; }
