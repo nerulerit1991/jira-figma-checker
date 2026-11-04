@@ -248,6 +248,15 @@ const testsScore = computed(() => {
   const r = tests.value?.results;
   return r && r.passed + r.failed ? { passed: r.passed, total: r.passed + r.failed } : null;
 });
+// Check UI totals across its three parts (acceptance checklist, Figma design categories, responsive viewports),
+// shown like the test run line: "N passed · N failed".
+const checkCounts = computed(() => {
+  const parts = [checklistScore.value, designScore.value, responsiveScore.value].filter((x) => x?.total);
+  if (!check.value || !parts.length) return null;
+  const passed = parts.reduce((sum, x) => sum + x.passed, 0);
+  return { passed, failed: parts.reduce((sum, x) => sum + x.total, 0) - passed };
+});
+const seconds = (ms) => (ms == null ? '' : `${(ms / 1000).toFixed(1)}s`);
 const scoreClass = (s) => (s.total && s.passed === s.total ? 'good' : 'bad');
 
 const scorePercent = (sc) => (sc?.total ? Math.round((sc.passed / sc.total) * 100) : 0);
@@ -1097,7 +1106,7 @@ onMounted(async () => {
 
             <!-- 02 Check -->
             <section class="card">
-              <div class="card-head">
+              <div class="card-head tests-card-head">
                 <span class="step">02</span>
                 <h2>Check UI</h2>
                 <span v-if="clickedRuns.check" class="run-chips">
@@ -1121,7 +1130,13 @@ onMounted(async () => {
                   <svg v-else viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l10-6.5z" /></svg>
                 </button>
               </div>
-              <p v-if="check?.recheckedAt" class="meta recheck-meta">Errors re-checked {{ formatDate(check.recheckedAt) }} · full check {{ formatDate(check.checkedAt) }}</p>
+              <!-- Same format as the "Last ticket test run" line in Functional & API tests. -->
+              <p v-if="check?.checkedAt" class="meta check-run-meta">
+                Last UI check {{ formatDate(check.checkedAt) }}<template v-if="check.durationMs != null"> · {{ seconds(check.durationMs) }}</template><template v-if="checkCounts"> ·
+                <span class="ok-text">{{ checkCounts.passed }} passed</span> ·
+                <span :class="{ 'bad-text': checkCounts.failed }">{{ checkCounts.failed }} failed</span></template>
+                <template v-if="check.recheckedAt"> · errors re-checked {{ formatDate(check.recheckedAt) }}<template v-if="check.recheckDurationMs != null"> ({{ seconds(check.recheckDurationMs) }})</template></template>
+              </p>
               <p v-if="!jira" class="hint">Retrieve the Jira ticket first to build the checklist.</p>
               <p v-else-if="!pageUrl" class="hint">Enter the live page URL under Details / Data to enable play.</p>
               <p v-else-if="isBusy('check')" class="hint">Rendering at desktop, tablet and mobile, then comparing with Jira and Figma…</p>

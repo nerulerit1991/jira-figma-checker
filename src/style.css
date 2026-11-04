@@ -166,7 +166,7 @@ p { margin: 0; }
 .run-chip { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 0.68rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
 .run-chip.busy { color: #9eff00; border-color: rgba(158, 255, 0, 0.4); background: rgba(158, 255, 0, 0.08); }
 .inline-field .recheck, .card-head .recheck { flex: none; white-space: nowrap; height: 34px; }
-.recheck-meta { margin: 8px 0 0; font-size: 0.76rem; }
+.check-run-meta { margin: 8px 0 0; }
 /* Margins are static (never keyed to which sibling is present) so the login note's
    v-show transition can't snap the cost note when elements appear or disappear. */
 .tests-card-head { margin-bottom: 0; }

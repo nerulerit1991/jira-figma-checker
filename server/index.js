@@ -496,6 +496,7 @@ app.post('/api/tickets/:key/check', async (req, res) => {
   const figma = saved?.specs?.length || saved?.typography?.length ? saved : null;
 
   const data = await once(`check:${key}`, async () => {
+    const started = Date.now();
     const frameWidth = figmaFrameWidth(figma);
     const compareViewport = viewportFor(frameWidth);
     // A desktop design is captured at exactly its frame width, so x positions need no scaling.
@@ -515,6 +516,7 @@ app.post('/api/tickets/:key/check', async (req, res) => {
       layoutScan: Object.fromEntries(page.viewports.map((v) => [v.name, v.layout])),
       warning: page.warning,
       checkedAt: new Date().toISOString(),
+      durationMs: Date.now() - started,
       ai: meta,
     });
     return { check, errors: await writeJson(key, 'check-errors', buildCheckErrors(check, jira.checklist)) };
@@ -537,6 +539,7 @@ app.post('/api/tickets/:key/check/recheck', async (req, res) => {
   const figma = saved?.specs?.length || saved?.typography?.length ? saved : null;
 
   const data = await once(`check:${key}`, async () => {
+    const started = Date.now();
     const frameWidth = figmaFrameWidth(figma);
     const compareViewport = errors.compareViewport || viewportFor(frameWidth);
     const desktopWidth = compareViewport === 'desktop' && frameWidth >= 1024 && frameWidth <= 2560 ? frameWidth : undefined;
@@ -564,6 +567,7 @@ app.post('/api/tickets/:key/check/recheck', async (req, res) => {
       ...mergeRecheck(check, data, page),
       url,
       recheckedAt: new Date().toISOString(),
+      recheckDurationMs: Date.now() - started,
       recheckedItems: errors.count,
       ai: meta,
     });
