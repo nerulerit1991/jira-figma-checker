@@ -52,6 +52,13 @@ const SETTLE_MS = 10_000;
 // The UI polls the login settings, shows the input and posts the value back to answerChallenge().
 const challenges = new Map();
 const CAPTCHA ='iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"], .g-recaptcha, .h-captcha, .cf-turnstile';
+// A CAPTCHA widget showing on the page (a checkbox or picture grid to solve). Invisible ones such as reCAPTCHA v3
+// have no visible box and do not count: they never ask the person anything.
+const CAPTCHA_VISIBLE = ['.g-recaptcha', '.h-captcha', '.cf-turnstile', 'iframe[src*="recaptcha/api2/bframe"]', 'iframe[src*="hcaptcha"]']
+  .map((selector) => `${selector}:visible`)
+  .join(', ');
+const MANUAL_MESSAGE =
+  'This login has a CAPTCHA the app cannot answer. A browser window opened on the login page with the username and password filled in: solve the CAPTCHA there, sign in (and enter any OTP), then come back. The app saves the session when it sees you are signed in.';
 
 async function readJson(file) {
   try {
@@ -209,6 +216,7 @@ async function signIn(page, creds, sites, ask) {
 
   // Two-step logins: username/email first, then the password on the next screen.
   if (!hasPassword) {
+    if (await page.locator(CAPTCHA_VISIBLE).count()) return { ok: false, byHand: true };
     if (!(await page.evaluate(markUserField, false))) {
       return offSite() || { ok: false, message: 'No sign-in form found on the login page. Check the login page URL.' };
     }
@@ -227,6 +235,8 @@ async function signIn(page, creds, sites, ask) {
 
   const blocked = offSite();
   if (blocked) return blocked;
+  // A CAPTCHA widget already on the form (e.g. "I'm not a robot"): the person signs in in a browser window instead.
+  if (await page.locator(CAPTCHA_VISIBLE).count()) return { ok: false, byHand: true };
 
   // An image CAPTCHA on the login form is read and typed by the person in the app. A wrong one is asked again with
   // the new image; the username and password are filled again too, since sites often clear them after a failure.
@@ -247,9 +257,8 @@ async function signIn(page, creds, sites, ask) {
 
     if (outcome === 'otp') return enterOtp(page, ask);
     if (outcome === 'done') return { ok: true, message: 'Signed in' };
-    if (await page.locator(CAPTCHA).count()) {
-      return { ok: false, message: 'Sign-in failed: the login page has a CAPTCHA widget (e.g. reCAPTCHA), which cannot be answered from the app. Use a test environment without it.' };
-    }
+    // A CAPTCHA widget (e.g. a reCAPTCHA picture grid shown after the submit): the person signs in in a browser window.
+    if (await page.locator(CAPTCHA).count()) return { ok: false, byHand: true };
     const error = await pageError(page);
     if (!(await page.locator(CAPTCHA_INPUT).count()) || attempt >= PERSON_TRIES) {
       return { ok: false, message: error ? `Sign-in failed: ${error}` : 'Sign-in failed: the login form is still showing. Check the username and password.' };
@@ -349,6 +358,66 @@ async function enterOtp(page, ask) {
 }
 
 /**
+ * For logins with a CAPTCHA widget: in `page` (a visible browser window), opens the login page, fills the username
+ * and password (on `sites` only) and leaves the CAPTCHA, the submit and any OTP to the person. Finishes when the
+ * page is seen signed in, when the person says so in the app ("I've signed in"), or stops when they cancel, close
+ * the window or PERSON_WAIT_MS passes. Returns { ok, message }.
+ */
+async function signInByHand(page, creds, sites, ask) {
+  await page.goto(creds.loginUrl, { waitUntil: 'load', timeout: LOGIN_TIMEOUT_MS }).catch(() => {});
+  await page.bringToFront().catch(() => {});
+  const start = new URL(page.url());
+  if (sites.has(start.origin)) {
+    const password = page.locator('input[type=password]:visible').first();
+    const hasPassword = (await password.count().catch(() => 0)) > 0;
+    if (await page.evaluate(markUserField, hasPassword).catch(() => false)) {
+      await page.locator('[data-qa-login-user]').first().fill(creds.username).catch(() => {});
+    }
+    if (hasPassword) await password.fill(creds.password).catch(() => {});
+  }
+
+  let watching = true;
+  const answered = ask('manual', { message: MANUAL_MESSAGE }).then((value) => ({ by: value === null ? 'cancel' : 'person' }));
+  const closed = new Promise((resolve) => page.once('close', () => resolve({ by: 'closed' })));
+  const seen = (async () => {
+    // Two checks in a row, so a page passing through on a redirect does not count.
+    for (let streak = 0; watching; ) {
+      streak = (await signedInByHand(page, start, sites)) ? streak + 1 : 0;
+      if (streak >= 2) return { by: 'seen' };
+      await page.waitForTimeout(1000).catch(() => {});
+    }
+    return { by: 'stopped' };
+  })();
+  const { by } = await Promise.race([answered, closed, seen]);
+  watching = false;
+
+  if (by === 'closed') return { ok: false, message: 'Sign-in stopped: the browser window was closed before signing in.' };
+  if (by === 'cancel') return { ok: false, message: 'Sign-in stopped: cancelled, or no sign-in within 5 minutes.' };
+  if (by === 'person') {
+    const stillOnLogin = (await page.locator('input[type=password]:visible').count().catch(() => 0)) > 0 || (await otpShowing(page).catch(() => false));
+    if (stillOnLogin) return { ok: false, message: 'Sign-in failed: the browser window still shows the login form. Sign in there before pressing "I\'ve signed in".' };
+  }
+  await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+  return { ok: true, message: 'Signed in by hand in the browser window' };
+}
+
+/** Whether the page in the visible window has left the login: a different page on the site, no login form, CAPTCHA or OTP. */
+async function signedInByHand(page, start, sites) {
+  try {
+    const url = new URL(page.url());
+    if (!sites.has(url.origin)) return false;
+    if (url.pathname === start.pathname && url.hash === start.hash) return false;
+    if (LOGIN_ROUTE.test(url.pathname + url.hash)) return false;
+    if (await page.locator('input[type=password]:visible').count()) return false;
+    if (await page.locator(CAPTCHA_VISIBLE).count()) return false;
+    return !(await otpShowing(page));
+  } catch {
+    // The page is navigating (or closed): look again on the next check.
+    return false;
+  }
+}
+
+/**
  * Returns ask(kind, { image, message }) for `key`: shows an OTP or CAPTCHA input in the app (through the login
  * settings the UI polls) and resolves with what the person typed, or null when they cancel or after PERSON_WAIT_MS.
  */
@@ -373,6 +442,7 @@ export function answerChallenge(key, id, value) {
     throw Object.assign(new Error('This sign-in step is no longer waiting (it finished, timed out or was replaced).'), { status: 409 });
   }
   if (value === null) return pending.settle(null);
+  if (pending.kind === 'manual') return pending.settle('done');
   const text = String(value ?? '').trim();
   if (!text) throw Object.assign(new Error(`Enter the ${pending.kind === 'otp' ? 'OTP' : 'CAPTCHA'} first.`), { status: 400 });
   pending.settle(text.slice(0, 64));
@@ -481,9 +551,23 @@ async function signInAndSave(key, pageUrl) {
   try {
     const { chromium } = await import('playwright');
     browser = await chromium.launch();
-    const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-    const page = await context.newPage();
-    const result = await signIn(page, creds, sites, ask);
+    let context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    let page = await context.newPage();
+    let result = await signIn(page, creds, sites, ask);
+    // A CAPTCHA widget: start over in a visible browser window where the person solves it and signs in.
+    if (result.byHand) {
+      await browser.close();
+      browser = await chromium.launch({ headless: false }).catch(() => null);
+      if (!browser) {
+        return finish({
+          ok: false,
+          message: 'Sign-in failed: the login page has a CAPTCHA widget (e.g. reCAPTCHA) and no browser window could be opened to solve it by hand. Run the app on a computer with a screen, or use a test environment without the CAPTCHA.',
+        });
+      }
+      context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+      page = await context.newPage();
+      result = await signInByHand(page, creds, sites, ask);
+    }
     if (asked) await writePrivate(credsFile(key), { ...(await readJson(credsFile(key))), humanCheck: true });
     if (!result.ok) {
       const shot = await page.screenshot({ type: 'png', fullPage: true }).catch(() => null);

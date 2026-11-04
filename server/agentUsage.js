@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { ROOT } from './config.js';
 import { cleanEnv } from './ai.js';
+import { codexCli } from './codexCli.js';
 
 const window = (label, usedPercent, resetsAt) =>
   usedPercent == null ? null : { label, usedPercent: Math.round(usedPercent), resetsAt: resetsAt || null };
@@ -39,7 +40,8 @@ async function claudeUsage() {
 /** Codex: ChatGPT plan limits from the Codex app server (account/rateLimits/read); no tokens. */
 function codexUsage() {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.env.CODEX_CLI_PATH || 'codex', ['app-server'], { cwd: ROOT, env: cleanEnv, stdio: ['pipe', 'pipe', 'ignore'] });
+    const codex = codexCli();
+    const child = spawn(codex.cmd, [...codex.args, 'app-server'], { cwd: ROOT, env: cleanEnv, stdio: ['pipe', 'pipe', 'ignore'] });
     let buffer = '';
     let account = null;
     const timer = setTimeout(() => finishWith(new Error('Codex did not report its limits in time.')), 15_000);

@@ -91,8 +91,9 @@ sender's OS, and `.env` / `data/*/.auth/` hold personal tokens and login session
 ### Windows notes
 - Use PowerShell or Windows Terminal; `npm run setup` and `npm run dev` work as on macOS.
 - The RTK proxy scripts (`dev:rtk`, `rtk:proxy:*`) use macOS/Linux binaries and do not run on Windows.
-- Codex mode expects a `codex` executable on `PATH`; an npm-installed Codex is a `codex.cmd` shim, which Node cannot
-  start directly, so prefer Claude mode on Windows (or set `CODEX_CLI_PATH` to the native `codex.exe`).
+- Codex mode finds the Codex CLI by itself (`server/codexCli.js`): `CODEX_CLI_PATH` in `.env`, then `codex.exe` on
+  `PATH`, then an npm install (`npm i -g @openai/codex`), then the `codex.exe` bundled with the Codex desktop app.
+  If it still reports `spawn codex ENOENT`, set `CODEX_CLI_PATH` to the full path of `codex.exe`.
 
 ### Claude login
 The server uses the Claude Agent SDK, which needs either:

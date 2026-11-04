@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ROOT, config } from './config.js';
 import { getAgentProvider } from './agentSettings.js';
+import { codexCli } from './codexCli.js';
 
 // Env vars set when this server is started from inside another Claude Code session
 // (e.g. the desktop app) make the SDK expect host-provided auth and skip your own login.
@@ -193,8 +194,14 @@ function runCommand(command, args, { input = '', timeoutMs = 15_000 } = {}) {
   });
 }
 
+/** Runs the Codex CLI (found by codexCli, so it also works on Windows) with `args`. */
+function runCodex(args, options) {
+  const { cmd, args: prefix } = codexCli();
+  return runCommand(cmd, [...prefix, ...args], options);
+}
+
 async function codexServers() {
-  const { stdout } = await runCommand('codex', ['mcp', 'list', '--json']);
+  const { stdout } = await runCodex(['mcp', 'list', '--json']);
   const servers = JSON.parse(stdout);
   if (!Array.isArray(servers)) throw new Error('Codex returned an invalid MCP server list.');
   return servers.filter((server) => server.enabled).map((server) => server.name);
@@ -246,7 +253,7 @@ async function runCodexAgentJson({ systemPrompt, prompt, mcpServers = [], images
     }
     args.push('-');
     const input = `You are the Codex agent used by the Jira and Figma UI Checker.\n${systemPrompt}\n\nFollow the task below and return only the requested JSON result. Do not modify external data; use MCP tools only to read or search.\n\n${prompt}`;
-    const { stdout } = await runCommand('codex', args, { input, timeoutMs: 10 * 60_000 });
+    const { stdout } = await runCodex(args, { input, timeoutMs: 10 * 60_000 });
     for (const line of stdout.split('\n')) {
       try {
         const event = JSON.parse(line);
@@ -372,12 +379,12 @@ export async function getClaudeMcpStatus() {
 async function getCodexMcpStatus() {
   let authenticated = false;
   try {
-    await runCommand('codex', ['login', 'status']);
+    await runCodex(['login', 'status']);
     authenticated = true;
   } catch { /* The CLI is installed but not logged in, or is unavailable. */ }
   let servers = [];
   try {
-    const { stdout } = await runCommand('codex', ['mcp', 'list', '--json']);
+    const { stdout } = await runCodex(['mcp', 'list', '--json']);
     const listed = JSON.parse(stdout);
     servers = Array.isArray(listed) ? listed.map((server) => {
       const authStatus = String(server.auth_status || 'unknown').toLowerCase();
