@@ -1,13 +1,18 @@
 <script setup>
 import { computed } from 'vue';
 import globalTestCatalog from '../../data/global-test-cases/cases.json';
+import ScriptReview from './ScriptReview.vue';
+import { hasTestCalls } from '../highlight.js';
 
 const props = defineProps({
   tests: { type: Object, default: null },
   globalTests: { type: Object, default: () => ({ cases: [], results: null }) },
   // Acceptance items meant for Playwright that no test covers yet; listed under Functionality as gaps.
   uncovered: { type: Array, default: () => [] },
+  // The script whose Verify switch is being saved.
+  verifyBusy: { type: String, default: null },
 });
+defineEmits(['verify']);
 
 const FILE_LABELS = { 'behavior.spec.js': 'Functionality', 'api.spec.js': 'API & health' };
 
@@ -29,6 +34,12 @@ const globalResult = (testCase) => props.globalTests?.results?.rows?.find((r) =>
 const groupFor = (file) => groups.value.find((g) => g.file === file);
 const statusSvg = (status) => status === 'passed' ? 'check' : status === 'failed' ? 'cross' : status === 'skipped' ? 'skip' : '';
 const rowClass = (status) => status === 'passed' ? 'pass' : status === 'failed' ? 'fail' : status === 'skipped' ? 'skip' : 'todo';
+const verifiedOf = (file) => Boolean(props.tests?.verification?.[file]?.verified);
+// A script with no tests runs nothing, so it is not shown for review and needs no verification.
+const hasTests = (file) => props.tests?.scripts?.[file] != null && hasTestCalls(props.tests.scripts[file]);
+const needsReview = (file) => hasTests(file) && !verifiedOf(file);
+// Scripts outside the two sections (none today) are still listed for review at the bottom.
+const otherScripts = computed(() => Object.keys(props.tests?.scripts || {}).filter((f) => !FILE_LABELS[f] && hasTests(f)));
 const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status === 'passed').length}/${rows.length}` : '';
 </script>
 
@@ -75,9 +86,18 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
     <details class="accordion suite-accordion">
       <summary>
         <span class="acc-title">API &amp; health</span>
+        <span v-if="needsReview('api.spec.js')" class="score-chip warn">Not verified</span>
         <span v-if="groupFor('api.spec.js')" class="score-chip" :class="groupFor('api.spec.js').items.some((r) => r.status === 'failed') ? 'bad' : 'good'">{{ sectionScore(groupFor('api.spec.js').items) }}</span>
         <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
       </summary>
+      <ScriptReview
+        v-if="hasTests('api.spec.js')"
+        name="api.spec.js"
+        :code="tests.scripts['api.spec.js']"
+        :state="tests.verification?.['api.spec.js']"
+        :busy="verifyBusy === 'api.spec.js'"
+        @verify="$emit('verify', $event)"
+      />
       <ul v-if="groupFor('api.spec.js')" class="checklist suite-list">
         <li v-for="(r, i) in groupFor('api.spec.js').items" :key="i" :class="r.status === 'passed' ? 'pass' : r.status === 'failed' ? 'fail' : r.status === 'skipped' ? 'skip' : 'todo'">
           <span class="mark" :aria-label="r.status"><svg v-if="statusSvg(r.status) === 'check'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7" /></svg><svg v-else-if="statusSvg(r.status) === 'cross'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg><svg v-else-if="statusSvg(r.status) === 'skip'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 12h12" /></svg></span>
@@ -91,9 +111,18 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
     <details class="accordion suite-accordion">
       <summary>
         <span class="acc-title">Functionality</span>
+        <span v-if="needsReview('behavior.spec.js')" class="score-chip warn">Not verified</span>
         <span v-if="groupFor('behavior.spec.js')" class="score-chip" :class="groupFor('behavior.spec.js').items.some((r) => r.status === 'failed') ? 'bad' : 'good'">{{ sectionScore(groupFor('behavior.spec.js').items) }}</span>
         <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
       </summary>
+      <ScriptReview
+        v-if="hasTests('behavior.spec.js')"
+        name="behavior.spec.js"
+        :code="tests.scripts['behavior.spec.js']"
+        :state="tests.verification?.['behavior.spec.js']"
+        :busy="verifyBusy === 'behavior.spec.js'"
+        @verify="$emit('verify', $event)"
+      />
       <ul v-if="groupFor('behavior.spec.js') || uncovered.length" class="checklist suite-list">
         <li v-for="(r, i) in groupFor('behavior.spec.js')?.items || []" :key="i" :class="r.status === 'passed' ? 'pass' : r.status === 'failed' ? 'fail' : r.status === 'skipped' ? 'skip' : 'todo'">
           <span class="mark" :aria-label="r.status"><svg v-if="statusSvg(r.status) === 'check'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7" /></svg><svg v-else-if="statusSvg(r.status) === 'cross'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg><svg v-else-if="statusSvg(r.status) === 'skip'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 12h12" /></svg></span>
@@ -117,12 +146,17 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
       <ul class="list"><li v-for="(n, i) in tests.notes" :key="i">{{ n }}</li></ul>
     </template>
 
-    <details v-if="tests?.scripts" class="more scripts">
-      <summary>View ticket-specific scripts</summary>
-      <div v-for="(code, name) in tests.scripts" :key="name" class="script">
-        <p class="script-name"><code>data/…/tests/{{ name }}</code></p>
-        <pre><code>{{ code }}</code></pre>
-      </div>
-    </details>
+    <div v-if="otherScripts.length" class="scripts">
+      <p class="label">Other ticket-specific scripts</p>
+      <ScriptReview
+        v-for="name in otherScripts"
+        :key="name"
+        :name="name"
+        :code="tests.scripts[name]"
+        :state="tests.verification?.[name]"
+        :busy="verifyBusy === name"
+        @verify="$emit('verify', $event)"
+      />
+    </div>
   </div>
 </template>

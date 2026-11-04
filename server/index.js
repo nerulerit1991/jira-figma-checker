@@ -4,6 +4,7 @@ import express from 'express';
 import path from 'node:path';
 import { config, DATA_DIR } from './config.js';
 import { runAgentJson, getMcpStatus } from './ai.js';
+import { tokenTotals } from './tokenLog.js';
 import { setAgentProvider, getAgentProvider } from './agentSettings.js';
 import { getAgentUsage } from './agentUsage.js';
 import { readCodexAccount } from './codexAccount.js';
@@ -30,7 +31,7 @@ import { buildCheckErrors, viewportsFor, errorSections, inSections, mergeRecheck
 import { capturePage, VIEWPORTS } from './capture.js';
 import { parseFigmaUrl, withScheme } from './figma.js';
 import { fixConnection, getJobs, signOutAll, browserStatus, cancelOtherAgentLogins } from './connections.js';
-import { readTests, readGlobalTests, generateTests, runTests, runGlobalTests, rerunFailedTests } from './tests.js';
+import { verifyScript, readTests, readGlobalTests, generateTests, runTests, runGlobalTests, rerunFailedTests } from './tests.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -216,7 +217,13 @@ app.get('/api/tickets/:key', async (req, res) => {
   // Checks saved before check-errors.json existed get their errors built on the fly.
   // Rebuilt from the check so items the Jira step now gives to Playwright or marks not testable drop out.
   const checkErrors = check ? buildCheckErrors(check, jira?.checklist) : savedErrors;
-  res.json({ ticket, jira, figma, check, checkErrors, tests, globalTests, figmaSaved, login });
+  res.json({ ticket, jira, figma, check, checkErrors, tests, globalTests, figmaSaved, login, tokens: await tokenTotals(ticket.key) });
+});
+
+// Tokens used by every AI call on this ticket, including re-fetches whose results were replaced.
+app.get('/api/tickets/:key/tokens', async (req, res) => {
+  const { key } = await requireTicket(req.params.key);
+  res.json(await tokenTotals(key));
 });
 
 // Saves the Figma / page links typed for a ticket.
@@ -278,7 +285,7 @@ app.post('/api/tickets/:key/jira', async (req, res) => {
         throw httpError(400, 'Jira API is not set up. Add JIRA_EMAIL and JIRA_API_TOKEN to .env and restart the app, or use the Jira MCP tab.');
       }
       const { acceptanceText, ...issue } = await fetchJiraIssue(jiraUrl, key);
-      const { data, meta } = await runAgentJson(jiraChecklistPrompt({ ...issue, acceptanceText }));
+      const { data, meta } = await runAgentJson({ ...jiraChecklistPrompt({ ...issue, acceptanceText }), track: { key, source: 'jira' } });
       return writeJson(key, 'jira', {
         ...issue,
         acceptanceCriteria: data.acceptanceCriteria || [],
@@ -291,13 +298,16 @@ app.post('/api/tickets/:key/jira', async (req, res) => {
       });
     }
     const { server, otherServers } = await connectedServer('jira');
-    const { data: issue, meta: retrievalMeta } = await runAgentJson({ ...jiraPrompt(jiraUrl, key, server), mcpServers: [server], otherServers, light: true });
-    const { data: checklist, meta: checklistMeta } = await runAgentJson(jiraChecklistPrompt({
-      key,
-      summary: issue.summary || '',
-      description: issue.description || '',
-      acceptanceText: issue.acceptanceText || issue.acceptanceCriteria?.join('\n') || '',
-    }));
+    const { data: issue, meta: retrievalMeta } = await runAgentJson({ ...jiraPrompt(jiraUrl, key, server), mcpServers: [server], otherServers, light: true, track: { key, source: 'jira' } });
+    const { data: checklist, meta: checklistMeta } = await runAgentJson({
+      ...jiraChecklistPrompt({
+        key,
+        summary: issue.summary || '',
+        description: issue.description || '',
+        acceptanceText: issue.acceptanceText || issue.acceptanceCriteria?.join('\n') || '',
+      }),
+      track: { key, source: 'jira' },
+    });
     return writeJson(key, 'jira', {
       ...issue,
       key,
@@ -327,7 +337,7 @@ app.post('/api/tickets/:key/figma', async (req, res) => {
   if (via === 'bridge') {
     const data = await once(`figma:${key}`, async () => {
       const { server, otherServers } = await connectedServer('figmaBridge');
-      const { data, meta } = await runAgentJson({ ...figmaBridgePrompt(server), mcpServers: [server], otherServers, light: true });
+      const { data, meta } = await runAgentJson({ ...figmaBridgePrompt(server), mcpServers: [server], otherServers, light: true, track: { key, source: 'figma' } });
       if (!data?.specs?.length && !data?.typography?.length) {
         throw httpError(502, `Figma desktop (bridge) returned no design data. ${String(data?.summary || '').slice(0, 200)} ` +
           'Select the frame in the Figma desktop app with the bridge plugin running, then try again. Nothing was saved, so your existing Figma data is unchanged.');
@@ -396,7 +406,7 @@ app.post('/api/tickets/:key/figma', async (req, res) => {
   // MCP: the selected agent's local Figma MCP, via AI.
   const data = await once(`figma:${key}`, async () => {
     const { server, otherServers } = await connectedServer('figma');
-    const { data, meta } = await runAgentJson({ ...figmaPrompt(figmaLink, server), mcpServers: [server], otherServers, light: true });
+    const { data, meta } = await runAgentJson({ ...figmaPrompt(figmaLink, server), mcpServers: [server], otherServers, light: true, track: { key, source: 'figma' } });
     // An empty result (e.g. the connector is rate-limited) must not replace design data that is already saved.
     if (!data?.specs?.length && !data?.typography?.length) {
       const said = `${data?.summary || ''} ${(data?.notes || []).join(' ')}`;
@@ -496,6 +506,7 @@ app.post('/api/tickets/:key/check', async (req, res) => {
       ...checkPrompt({ url, checklist: itemsVerifiedBy(jira.checklist, 'live'), figma: figma && { ...figmaData, frameWidth }, page, compareViewport }),
       images: page.viewports.flatMap((v) => v.tiles.map((t) => ({ mediaType: 'image/jpeg', base64: t.base64 }))),
       otherServers: (await getStatus()).all.map((s) => s.name),
+      track: { key, source: 'check' },
     });
     const check = await writeJson(key, 'check', {
       ...data,
@@ -547,6 +558,7 @@ app.post('/api/tickets/:key/check/recheck', async (req, res) => {
       ...recheckPrompt({ url, errors, figma: figmaSlice, page, compareViewport }),
       images: page.viewports.flatMap((v) => v.tiles.map((t) => ({ mediaType: 'image/jpeg', base64: t.base64 }))),
       otherServers: (await getStatus()).all.map((s) => s.name),
+      track: { key, source: 'check' },
     });
     const merged = await writeJson(key, 'check', {
       ...mergeRecheck(check, data, page),
@@ -616,6 +628,17 @@ app.post('/api/tickets/:key/tests/run', async (req, res) => {
   const { key, pageUrl } = await requireTicket(req.params.key);
   const url = requireUrl(req.body.url || pageUrl, 'Page URL');
   res.json(await testsJob(key, 'run', () => runTests(key, url)));
+});
+
+// A person marks a generated script as reviewed; only verified scripts run. `hash` is the version they read.
+app.post('/api/tickets/:key/tests/verify', async (req, res) => {
+  const { key } = await requireTicket(req.params.key);
+  const { file, hash, verified } = req.body || {};
+  if (typeof file !== 'string' || !/^[a-z0-9-]+\.spec\.js$/.test(file)) throw httpError(400, 'Choose a script to verify.');
+  if (verified && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) throw httpError(400, 'Missing the reviewed script version.');
+  // Not joined with other jobs (two clicks on different scripts are two changes); only refused while scripts are rewritten.
+  if (inFlight.has(`tests-generate:${key}`)) throw httpError(409, `${TEST_JOBS.generate} is still in progress for ${key}. Try again when it finishes.`);
+  res.json(await verifyScript(key, file, hash, Boolean(verified)));
 });
 
 // Re-runs only the failed ticket and global tests from the last run. No AI, no tokens.

@@ -322,9 +322,11 @@ ${JSON.stringify(scan)}
 
 RULES for the code:
 - Plain JavaScript ES modules. The ONLY import allowed is: import { test, expect } from '@playwright/test';
-- No require, dynamic import, process, fs, eval, Function, globalThis, child_process or node: modules.
+- No require, dynamic import, process, fs, eval, Function, globalThis, child_process or node: modules. Never read
+  cookies (context.cookies(), document.cookie).
 - baseURL is already set to ${url}. Navigate with page.goto('/') or relative paths. Use absolute URLs only for
-  the network calls listed in the scan.
+  the network calls listed in the scan's "network". Never call or put in the code any other host, including the
+  third-party hosts in "thirdPartyHostsNotTested" (analytics, CAPTCHA, CDNs): a script that does is rejected.
 - Prefer resilient locators: getByRole, getByLabel, getByText, getByPlaceholder, getByTestId; fall back to CSS ids/classes from the scan.
 - Base locators on the scan's "outline" (each page block's real selector, its short text labels with tag and class,
   and repeated child classes such as cards). Never assume tags like <footer>, <h3> or class names that are not in the scan.
@@ -335,13 +337,29 @@ RULES for the code:
   A locator that starts at an ancestor (e.g. section.locator('summary')) matches nothing there.
 - Content may fade or slide in on scroll: check presence with toBeAttached, or scrollIntoViewIfNeeded() before toBeVisible.
 - Mobile behaviour: put it in a test.describe with test.use({ viewport: { width: 375, height: 812 } }).
-- Never submit forms that would create real records or send real emails, unless the ticket requires it; prefer
-  validation paths (e.g. submitting empty required fields shows an error). Never use real credentials. Clearly fake
+- Never submit forms that would send real emails, and never create records except your own test records (below);
+  prefer validation paths (e.g. submitting empty required fields shows an error). Never use real credentials. Clearly fake
   values are fine for validation and rejection paths: an email at example.com and a made-up password, e.g. to check
   that invalid credentials show an error, a field rejects a bad format, or a password rule is enforced. A flow that needs
   a real account to succeed (a successful login, a lockout after N attempts) is written with test.skip(true, 'Needs a test account').${signedIn ? `
 - The browser is ALREADY SIGNED IN as a test user (the scan was taken signed in). Do not test the login form, do not
   type credentials and never click sign out / log out, since that would end the session for the other tests.` : ''}
+- TEST DATA (create, update/edit/replace, delete, and any other action that changes saved data, in the UI or through an
+  API call): a test only ever changes records it created itself, never existing ones.
+  1. Make a unique name at the start of the test:
+     const testName = \`Playwright-Test-\${Date.now()}-\${Math.floor(Math.random() * 10000)}\`;
+     Put it in the record's name/title field. For an email field use \`playwright-test-\${Date.now()}@example.com\`; other
+     fields (phone, number, date) take clearly fake values.
+  2. Create that record first (through the page's own create flow), even when the item only tests edit or delete.
+  3. Find it ONLY by that name (e.g. page.getByRole('row', { name: testName })), never by position (first(), nth(),
+     "the first row/card") or by any other existing record's text, and do the item's edit or delete on it.
+  4. Clean up: delete the record in a finally block (or test.afterEach) so it is removed even when the test fails. A
+     delete test's own delete counts as the cleanup; still guard it with finally in case an earlier step fails.
+  5. If the test cannot create its own record (no create flow on this page, the test account may not create one, or a
+     required value is unknown), do NOT click the action on an existing record, not even to Cancel its confirmation.
+     Use test.skip(true, 'Cannot create its own Playwright-Test record: <reason>') instead.
+  The same applies to api.spec.js: send POST/PUT/PATCH/DELETE only for a Playwright-Test- record the test created, and
+  delete it afterwards; otherwise skip that call with a reason.
 - Each ticket-specific behavior test title starts with the checklist id(s) it covers in brackets, e.g. "[C3] confirmation panel opens". API-specific tests use "[api]". Do not emit generic health, navigation, accessibility, form-validation, or responsive-layout tests; those are in the global suite. Validation rules the ticket itself states (e.g. a password policy, a field's maximum length) are ticket tests.
 - Keep each test independent and fast (no fixed waits over 1s; rely on auto-waiting expects).
 

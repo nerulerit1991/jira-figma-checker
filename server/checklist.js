@@ -1,5 +1,5 @@
 // Which step verifies each acceptance checklist item. Shared by the server and the UI.
-//   live          "Check the live page": provable from the page as it loads (screenshots + DOM)
+//   live          "Check UI": provable from the page as it loads (screenshots + DOM)
 //   playwright    a Playwright test: needs typing, clicking, submitting or a server response
 //   not-testable  neither step can verify it (time passing, database state, another system); manual QA
 export const VERIFY_BY = ['live', 'playwright', 'not-testable'];

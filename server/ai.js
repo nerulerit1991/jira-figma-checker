@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ROOT, config } from './config.js';
 import { getAgentProvider } from './agentSettings.js';
+import { logTokens } from './tokenLog.js';
 import { codexCli } from './codexCli.js';
 
 // Env vars set when this server is started from inside another Claude Code session
@@ -140,9 +141,7 @@ async function runClaudeAgentJson({ systemPrompt, prompt, mcpServers = [], other
         if (msg.subtype !== 'success') {
           throw new Error(`Claude run failed (${msg.subtype}): ${(msg.errors || []).join('; ')}`);
         }
-        return {
-          data: extractJson(msg.result),
-          meta: {
+        const meta = {
             costUsd: msg.total_cost_usd,
             usage: msg.usage,
             toolCalls,
@@ -151,8 +150,8 @@ async function runClaudeAgentJson({ systemPrompt, prompt, mcpServers = [], other
             // The model that actually answered (modelUsage also lists small helper calls; take the busiest).
             model: Object.entries(msg.modelUsage || {}).sort((a, b) => b[1].outputTokens - a[1].outputTokens)[0]?.[0] || (light ? config.extractModel : config.model) || null,
             effort: light ? 'low' : 'default',
-          },
         };
+        return { data: parseWithMeta(msg.result, meta), meta };
       }
     }
     throw new Error('Claude run ended without a result.');
@@ -269,7 +268,8 @@ async function runCodexAgentJson({ systemPrompt, prompt, mcpServers = [], images
       } catch { /* Codex emits one JSON event per line. */ }
     }
     const text = await fs.readFile(outputFile, 'utf8');
-    return { data: extractJson(text), meta: { provider: 'codex', toolCalls, usage, costUsd: null, ...(light && { model: config.codexExtractModel || 'default', effort: 'low' }) } };
+    const meta = { provider: 'codex', toolCalls, usage, costUsd: null, ...(light && { model: config.codexExtractModel || 'default', effort: 'low' }) };
+    return { data: parseWithMeta(text, meta), meta };
   } catch (error) {
     // Codex reports account problems (e.g. "You've hit your usage limit…") as JSON events on stdout.
     const reported = String(error.stdout || '')
@@ -277,15 +277,36 @@ async function runCodexAgentJson({ systemPrompt, prompt, mcpServers = [], images
       .map((line) => { try { return JSON.parse(line); } catch { return null; } })
       .find((event) => event?.type === 'error' || event?.type === 'turn.failed');
     const message = reported?.message || reported?.error?.message || error.message;
-    throw new Error(`Codex run failed: ${message}`);
+    // Keep the usage of a finished turn whose answer was not usable, for the token log.
+    throw Object.assign(new Error(`Codex run failed: ${message}`), error.meta ? { meta: error.meta } : {});
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
 }
 
-export async function runAgentJson(options) {
+// The answer was paid for even when it is not valid JSON, so the error carries its usage for the token log.
+function parseWithMeta(text, meta) {
+  try {
+    return extractJson(text);
+  } catch (error) {
+    throw Object.assign(error, { meta });
+  }
+}
+
+/**
+ * Runs one agent turn. With `track: { key, source }`, its tokens are added to that ticket's token log (also when the
+ * answer turns out to be unusable), so the Sources panel totals every call, not just the saved result.
+ */
+export async function runAgentJson({ track, ...options }) {
   const provider = await getAgentProvider();
-  return provider === 'codex' ? runCodexAgentJson(options) : runClaudeAgentJson(options);
+  try {
+    const result = await (provider === 'codex' ? runCodexAgentJson(options) : runClaudeAgentJson(options));
+    if (track) await logTokens(track.key, track.source, result.meta);
+    return result;
+  } catch (error) {
+    if (track && error.meta) await logTokens(track.key, track.source, error.meta, { failed: true });
+    throw error;
+  }
 }
 
 export function extractJson(text) {

@@ -261,13 +261,20 @@ const tokensOf = (meta) => {
   return (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.output_tokens || 0);
 };
 const formatTokenCount = (t) => (t ? (t >= 1000 ? `${(t / 1000).toFixed(1)}k tok` : `${t} tok`) : '—');
-const formatTokens = (meta) => formatTokenCount(tokensOf(meta));
 
-const totalTokens = computed(() => {
-  const records = [jira.value, figma.value, check.value, tests.value].filter(Boolean);
-  if (!records.some((record) => record.ai)) return null;
-  return records.reduce((sum, record) => sum + tokensOf(record.ai), 0);
-});
+// Every AI call on this ticket (data/<KEY>/token-log.json), so re-fetches add up instead of replacing the last cost.
+const ticketTokens = ref(null);
+const sourceTokens = (source) => ticketTokens.value?.bySource?.[source] || { tokens: 0, calls: 0 };
+const totalTokens = computed(() => (ticketTokens.value?.calls ? ticketTokens.value.total : null));
+const runsText = (source) => (sourceTokens(source).calls > 1 ? ` · ${sourceTokens(source).calls} AI runs` : '');
+async function refreshTokens(key) {
+  try {
+    const totals = await api.tokens(key);
+    if (selectedKey.value === key) ticketTokens.value = totals;
+  } catch {
+    /* non-critical: the next ticket load shows it */
+  }
+}
 
 // "-N tokens" animation after each AI call.
 const burst = ref(null);
@@ -470,6 +477,7 @@ async function loadTicket(key) {
   cancelAnimationFrame(scoreAnimationFrame);
   scoreProgress.value = 0;
   ticket.value = jira.value = figma.value = check.value = checkErrors.value = tests.value = null;
+  ticketTokens.value = null;
   figmaSaved.value = null;
   applyLogin(null);
   signInError.value = '';
@@ -491,6 +499,7 @@ async function loadTicket(key) {
     checkErrors.value = data.checkErrors;
     tests.value = data.tests;
     globalTests.value = data.globalTests;
+    ticketTokens.value = data.tokens || null;
     applyLogin(data.login);
     figmaUrl.value = data.ticket.figmaUrl || data.figma?.sourceUrl || data.jira?.figmaLinks?.[0] || '';
     pageUrl.value = data.ticket.pageUrl || data.check?.url || '';
@@ -535,6 +544,8 @@ async function run(action, request, apply) {
     const { [id]: _, ...rest } = jobs.value;
     jobs.value = rest;
     if (['check', 'tests', 'run'].includes(action)) refreshLogin(key);
+    // AI runs add to the ticket's token total, also when they fail after the agent answered.
+    if (['jira', 'figma', 'check', 'tests'].includes(action)) refreshTokens(key);
   }
 }
 
@@ -734,6 +745,26 @@ function runTests() {
   });
 }
 
+// A person reviewed a generated script (or withdraws that); only verified scripts run.
+const verifyBusy = ref(null);
+async function verifyScript({ file, hash, verified }) {
+  const key = selectedKey.value;
+  if (!key || verifyBusy.value) return;
+  verifyBusy.value = file;
+  try {
+    const res = await api.verifyScript(key, file, hash, verified);
+    if (selectedKey.value === key) tests.value = res;
+  } catch (e) {
+    // The script changed under the reviewer (e.g. regenerated in another tab): show the new version.
+    if (selectedKey.value === key) {
+      await loadTicket(key).catch(() => {});
+      error.value = e.message;
+    }
+  } finally {
+    verifyBusy.value = null;
+  }
+}
+
 // Re-runs only the tests that failed last time (ticket and global); passing results are kept.
 const failedTestCount = computed(() => (tests.value?.results?.failed || 0) + (globalTests.value?.results?.failed || 0));
 function rerunFailedTests() {
@@ -815,8 +846,8 @@ onMounted(async () => {
     <!-- Sidebar: brand, tickets, connections -->
     <aside class="sidebar">
       <div class="brand">
-        <span class="logo" aria-hidden="true"></span>
-        <span class="brand-name">UI Checker</span>
+        <img class="logo" src="/favicon.svg" alt="" />
+        <span class="brand-name">Figplayra</span>
       </div>
 
       <div class="ticket-actions">
@@ -1032,8 +1063,10 @@ onMounted(async () => {
                 <div class="source">
                   <label class="field-label" for="page-link">Page URL</label>
                   <div class="inline-field">
-                    <input id="page-link" v-model.trim="pageUrl" aria-label="Page URL" placeholder="http://localhost:3000/login" @change="saveLinks" />
+                    <input id="page-link" v-model.trim="pageUrl" aria-label="Page URL" aria-describedby="page-link-note" placeholder="http://localhost:3000/login" @change="saveLinks" />
                   </div>
+                  <!-- Generated tests click, type and create test records on this site. -->
+                  <p id="page-link-note" class="url-note">⚠ Use a staging, UAT or local URL only. Do not use production: tests interact with the site and create test records.</p>
                   <!-- Used by Check UI, Re-check and the tests: each signs in first when on. -->
                   <div class="login-row">
                     <label class="login-toggle" :class="{ on: loginOn }">
@@ -1062,7 +1095,7 @@ onMounted(async () => {
             <section class="card">
               <div class="card-head">
                 <span class="step">02</span>
-                <h2>Check the live page</h2>
+                <h2>Check UI</h2>
                 <span v-if="clickedRuns.check" class="run-chips">
                   <span v-for="chip in clickedRuns.check" :key="chip" class="run-chip" :title="chip" :class="{ busy: isBusy('check') }">{{ chip }}</span>
                 </span>
@@ -1181,6 +1214,8 @@ onMounted(async () => {
                   :tests="tests"
                   :global-tests="globalTests"
                   :uncovered="uncoveredItems"
+                  :verify-busy="verifyBusy"
+                  @verify="verifyScript"
                 >
                   <template #acceptance>
                     <details v-if="notTestableItems.length" class="accordion suite-accordion">
@@ -1250,9 +1285,9 @@ onMounted(async () => {
                   <span class="src-dot" :class="{ on: jira }"></span>
                   <div>
                     <p>Jira</p>
-                    <small>{{ jira ? formatDate(jira.fetchedAt) : 'Not retrieved' }}</small>
+                    <small>{{ jira ? formatDate(jira.fetchedAt) : 'Not retrieved' }}{{ runsText('jira') }}</small>
                   </div>
-                  <span class="cost">{{ jira ? formatTokens(jira.ai) : '' }}</span>
+                  <span class="cost" :title="sourceTokens('jira').calls ? `${sourceTokens('jira').calls} AI run(s) on this ticket` : undefined">{{ sourceTokens('jira').tokens ? formatTokenCount(sourceTokens('jira').tokens) : '' }}</span>
                 </li>
                 <li>
                   <span class="src-dot" :class="{ on: figmaHasSpecs }"></span>
@@ -1262,32 +1297,32 @@ onMounted(async () => {
                       <template v-if="figma">
                         {{ [figma.pageName, figma.frameWidth && `${figma.frameWidth}×${figma.frameHeight}`].filter(Boolean).join(' · ') }}
                       </template>
-                      <template v-else>Not retrieved</template>
+                      <template v-else>Not retrieved</template>{{ runsText('figma') }}
                     </small>
                   </div>
-                  <span class="cost">{{ figma ? formatTokens(figma.ai) : '' }}</span>
+                  <span class="cost" :title="sourceTokens('figma').calls ? `${sourceTokens('figma').calls} AI run(s) on this ticket` : undefined">{{ sourceTokens('figma').tokens ? formatTokenCount(sourceTokens('figma').tokens) : '' }}</span>
                 </li>
                 <li>
                   <span class="src-dot" :class="{ on: tests }"></span>
                   <div>
                     <p>Test scripts</p>
-                    <small>{{ tests ? `${tests.tests.length} tests · ${formatDate(tests.generatedAt)}` : 'Not generated' }}</small>
+                    <small>{{ tests ? `${tests.tests.length} tests · ${formatDate(tests.generatedAt)}` : 'Not generated' }}{{ runsText('tests') }}</small>
                   </div>
-                  <span class="cost">{{ tests ? formatTokens(tests.ai) : '' }}</span>
+                  <span class="cost" :title="sourceTokens('tests').calls ? `${sourceTokens('tests').calls} AI run(s) on this ticket` : undefined">{{ sourceTokens('tests').tokens ? formatTokenCount(sourceTokens('tests').tokens) : '' }}</span>
                 </li>
                 <li>
                   <span class="src-dot" :class="{ on: check }"></span>
                   <div>
                     <p>UI check</p>
-                    <small>{{ check ? formatDate(check.checkedAt) : 'Not run yet' }}</small>
+                    <small>{{ check ? formatDate(check.checkedAt) : 'Not run yet' }}{{ runsText('check') }}</small>
                   </div>
-                  <span class="cost">{{ check ? formatTokens(check.ai) : '' }}</span>
+                  <span class="cost" :title="sourceTokens('check').calls ? `${sourceTokens('check').calls} AI run(s) on this ticket` : undefined">{{ sourceTokens('check').tokens ? formatTokenCount(sourceTokens('check').tokens) : '' }}</span>
                 </li>
                 <li class="source-total">
                   <span></span>
                   <div>
                     <p>Total</p>
-                    <small>All sources on this ticket</small>
+                    <small>Every AI run on this ticket, re-fetches included</small>
                   </div>
                   <span class="cost">{{ totalTokens == null ? '' : formatTokenCount(totalTokens) }}</span>
                 </li>

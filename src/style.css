@@ -50,8 +50,8 @@ p { margin: 0; }
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
 .logo {
-  width: 30px; height: 30px; border-radius: 8px; flex: none;
-  background: linear-gradient(135deg, var(--accent) 0 50%, #4a3fb0 50% 100%);
+  /* public/favicon.svg: a Figma frame around a Playwright play button */
+  width: 30px; height: 30px; border-radius: 8px; flex: none; display: block;
   box-shadow: 0 4px 14px rgba(123, 108, 246, 0.35);
 }
 .brand-name { font-weight: 700; font-size: 1.05rem; letter-spacing: -0.02em; }
@@ -293,6 +293,7 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px soli
 li.skip .evidence { color: var(--muted); }
 .score-chip { font-family: var(--mono); font-size: 0.7rem; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
 .score-chip.good { color: var(--green); border-color: rgba(74, 222, 128, 0.35); background: var(--green-bg); }
+.score-chip.warn { color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); background: rgba(251, 191, 36, 0.12); }
 .score-chip.bad { color: #ff4d5e; border-color: rgba(255, 77, 94, 0.35); background: rgba(255, 77, 94, 0.12); }
 .block-title { margin: 32px 0 4px; font-size: 0.95rem; }
 
@@ -566,6 +567,32 @@ li.skip .item { color: var(--muted); }
   background: var(--inset); border: 1px solid var(--border); font-family: var(--mono); font-size: 0.74rem; line-height: 1.55; color: #d4d3de;
 }
 
+/* Generated script review: only verified scripts run */
+.script-review { margin: 10px 0 12px; padding: 10px 12px; border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 8px; background: rgba(251, 191, 36, 0.05); }
+.script-review.verified { border-color: var(--border); background: transparent; }
+.review-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.review-bar .verify-btn { margin-left: auto; height: 30px; padding: 0 14px; font-size: 0.8rem; }
+.review-hint { font-size: 0.75rem; color: var(--muted); }
+.risk-count { font-size: 0.75rem; color: #fbbf24; font-weight: 600; }
+.script-review .script { margin-top: 8px; }
+.review-code code { display: block; }
+.code-line { display: block; padding-right: 8px; }
+.code-line .ln { display: inline-block; width: 3ch; margin-right: 12px; text-align: right; color: var(--muted); user-select: none; opacity: 0.6; }
+/* Syntax colours (token types from src/highlight.js) */
+.tok-keyword { color: #c792ea; }
+.tok-string { color: #c3e88d; }
+.tok-regex { color: #f78c6c; }
+.tok-number, .tok-literal { color: #f78c6c; }
+.tok-comment { color: #7f8496; font-style: italic; }
+.tok-fn { color: #82aaff; }
+.tok-prop { color: #89ddff; }
+.tok-punct { color: #a6accd; }
+.code-line.risky { background: rgba(251, 191, 36, 0.14); box-shadow: inset 3px 0 0 #fbbf24; }
+.code-line.own { background: rgba(74, 222, 128, 0.07); box-shadow: inset 3px 0 0 var(--green); }
+.risk-note { margin-left: 16px; font-style: italic; font-size: 0.7rem; color: #fbbf24; user-select: none; }
+.code-line.own .risk-note { color: var(--green); }
+.own-count { font-size: 0.75rem; color: var(--green); }
+
 /* ================= "-N tokens" burst ================= */
 .inline-field, .burst-host { position: relative; }
 .burst-layer { position: absolute; right: 10px; top: 0; width: 0; height: 0; pointer-events: none; z-index: 5; }
@@ -678,3 +705,6 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
 .agent-window .meter i.low { background: var(--red); }
 .agent-window small { display: block; margin-top: 4px; font-size: 0.72rem; color: var(--subtle); }
 .warn-text { color: #fbbf24; }
+
+/* Under Page URL: tests act on the site, so never point them at production */
+.url-note { margin: 6px 0 0; font-size: 0.75rem; line-height: 1.4; color: #fbbf24; }

@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { prepareSession } from './login.js';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -9,7 +10,8 @@ import { scanForTests } from './capture.js';
 import { testsPrompt } from './prompts.js';
 
 // Generated tests live with the ticket, so deleting the ticket deletes them too:
-//   data/<KEY>/tests/*.spec.js, playwright.config.mjs, tests.json (what was generated), results.json (last run)
+//   data/<KEY>/tests/*.spec.js, playwright.config.mjs, tests.json (what was generated), results.json (last run),
+//   verification.json (which scripts a person reviewed; see verifyScript)
 const testsDir = (key) => path.join(DATA_DIR, key, 'tests');
 const GLOBAL_CASES_FILE = path.join(DATA_DIR, 'global-test-cases', 'cases.json');
 const GLOBAL_SPEC_FILE = path.join(DATA_DIR, 'global-test-cases', 'global.spec.js');
@@ -32,6 +34,39 @@ export default defineConfig({
 });
 `;
 
+// ---- Which hosts a test may call: only the site under test ----
+// A test runs with the site's signed-in session, so it may only send requests to that site (its own origin, or another
+// host of the same site such as its API subdomain). Third parties the page happens to load (analytics, CAPTCHA, CDNs)
+// are never allowed, so a script cannot pass session data to them.
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+// Shared hosting domains: each subdomain is a different owner's site, so only the exact host counts as the same site.
+const SHARED_HOSTING = /(^|\.)(webflow\.io|vercel\.app|netlify\.app|github\.io|pages\.dev|workers\.dev|herokuapp\.com|azurewebsites\.net|cloudfront\.net|amazonaws\.com|appspot\.com|firebaseapp\.com|web\.app|onrender\.com|fly\.dev|ngrok\.io|ngrok-free\.app|loca\.lt|trycloudflare\.com|wixsite\.com|squarespace\.com|myshopify\.com|wpengine\.com|framer\.website|glitch\.me|repl\.co|surge\.sh|azurestaticapps\.net)$/i;
+// Country domains with a second level (example.com.ph, example.co.uk): the site name is one label further left.
+const SECOND_LEVEL = /^(com|net|org|gov|edu|ac|co|or|ne|go)$/;
+
+/** The part of a host that identifies the site: "app.beta.example.com" → "example.com". */
+function siteOf(hostname) {
+  const host = hostname.toLowerCase();
+  if (LOCAL_HOSTS.has(host)) return 'localhost';
+  if (/^\d+(\.\d+){3}$/.test(host) || host.startsWith('[') || SHARED_HOSTING.test(host)) return host;
+  const labels = host.split('.');
+  const keep = labels.length >= 3 && labels.at(-1).length === 2 && SECOND_LEVEL.test(labels.at(-2)) ? 3 : 2;
+  return labels.slice(-keep).join('.');
+}
+
+/** Whether `origin` belongs to the same site as the page under test (any port on a local host). */
+export function sameSite(origin, pageUrl) {
+  try {
+    const a = new URL(origin);
+    const b = new URL(pageUrl);
+    return /^https?:$/.test(a.protocol) && siteOf(a.hostname) === siteOf(b.hostname);
+  } catch {
+    return false;
+  }
+}
+
+const siteOrigins = (url, origins) => new Set([new URL(url).origin, ...origins.filter((o) => sameSite(o, url))]);
+
 /**
  * Generated code runs on this machine, and the Jira text it was written from is untrusted.
  * Only allow Playwright test code that talks to the site under test.
@@ -42,7 +77,7 @@ export function validateScript(content, allowedOrigins) {
   const imports = [...content.matchAll(/^\s*import\s[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => m[1]);
   if (!imports.length || imports.some((m) => m !== '@playwright/test')) return 'imports something other than @playwright/test';
   const forbidden = content.match(
-    /\brequire\s*\(|\bimport\s*\(|\bprocess\b|child_process|\bfs\b|node:|\beval\s*\(|\bFunction\s*\(|globalThis|__dirname|__filename|WebSocket|\.exposeFunction|\.addInitScript|setExtraHTTPHeaders|storageState|\.route\s*\(/,
+    /\.cookies\s*\(|document\s*\.\s*cookie|\brequire\s*\(|\bimport\s*\(|\bprocess\b|child_process|\bfs\b|node:|\beval\s*\(|\bFunction\s*\(|globalThis|__dirname|__filename|WebSocket|\.exposeFunction|\.addInitScript|setExtraHTTPHeaders|storageState|\.route\s*\(/,
   );
   if (forbidden) return `uses "${forbidden[0].trim()}", which is not allowed`;
   for (const [, raw] of content.matchAll(/(https?:\/\/[^\s'"`)]+)/g)) {
@@ -52,7 +87,7 @@ export function validateScript(content, allowedOrigins) {
     } catch {
       return `contains an invalid URL: ${raw}`;
     }
-    if (!allowedOrigins.has(origin)) return `calls ${origin}, which is not the site under test`;
+    if (!allowedOrigins.has(origin)) return `calls ${origin}, which is not part of the site under test`;
   }
   return null;
 }
@@ -70,8 +105,55 @@ export async function readTests(key) {
   const errors = await readErrors(dir);
   const scripts = {};
   for (const f of meta.files) scripts[f] = await fs.readFile(path.join(dir, f), 'utf8').catch(() => '');
-  return { ...meta, results, errors, scripts };
+  const approvals = await readApprovals(dir);
+  const verification = Object.fromEntries(
+    Object.entries(scripts).map(([f, code]) => {
+      const hash = hashOf(code);
+      const approved = approvals[f]?.hash === hash;
+      return [f, { hash, verified: approved, verifiedAt: approved ? approvals[f].verifiedAt : null }];
+    }),
+  );
+  return { ...meta, results, errors, scripts, verification };
 }
+
+// ---- Review before running ----
+// A generated script runs as Node code on this machine and acts on the site as the test account, and it was written
+// from untrusted Jira text. So a person must read each script and click Verify before it can run. The approval is tied
+// to the script's exact content: regenerating or editing it makes it unverified again. Unverified scripts are never
+// loaded by Playwright (not even their top-level code).
+const APPROVALS_FILE = 'verification.json';
+const hashOf = (content) => createHash('sha256').update(content).digest('hex');
+const readApprovals = (dir) => fs.readFile(path.join(dir, APPROVALS_FILE), 'utf8').then(JSON.parse).catch(() => ({}));
+
+/** Marks one saved script as reviewed (or not). `hash` is the content the person reviewed; it must still be on disk. */
+export async function verifyScript(key, file, hash, verified) {
+  const dir = testsDir(key);
+  const meta = JSON.parse(await fs.readFile(path.join(dir, 'tests.json'), 'utf8').catch(() => 'null'));
+  if (!meta?.files?.includes(file)) throw Object.assign(new Error(`${file} is not one of this ticket's scripts.`), { status: 404 });
+  const approvals = await readApprovals(dir);
+  if (verified) {
+    const current = hashOf(await fs.readFile(path.join(dir, file), 'utf8'));
+    if (current !== hash) throw Object.assign(new Error(`${file} changed since you opened it. Review the new version, then verify again.`), { status: 409 });
+    approvals[file] = { hash, verifiedAt: new Date().toISOString() };
+  } else {
+    delete approvals[file];
+  }
+  await writeFileAtomic(path.join(dir, APPROVALS_FILE), JSON.stringify(approvals, null, 2));
+  return readTests(key);
+}
+
+/** The saved scripts whose current content was verified. */
+async function verifiedFiles(dir, files) {
+  const approvals = await readApprovals(dir);
+  const ok = [];
+  for (const f of files) {
+    const code = await fs.readFile(path.join(dir, f), 'utf8').catch(() => null);
+    if (code != null && approvals[f]?.hash === hashOf(code)) ok.push(f);
+  }
+  return ok;
+}
+
+const NOT_VERIFIED = 'Not verified. Review the script and click Verify to run it.';
 
 export async function readGlobalTests(key) {
   const dir = testsDir(key);
@@ -84,11 +166,15 @@ export async function readGlobalTests(key) {
 /** AI step (uses tokens): scans the page, writes the scripts, checks them and saves them for this ticket. */
 export async function generateTests(key, url, jira) {
   const storageState = await prepareSession(key, url);
-  const scan = await scanForTests(url, { storageState });
-  const allowedOrigins = new Set([new URL(url).origin, ...scan.network.map((n) => new URL(n.url).origin)]);
+  let scan = await scanForTests(url, { storageState });
+  // The AI only sees, and may only call, the site's own requests; third-party calls are left out of the scan.
+  const ownNetwork = scan.network.filter((n) => sameSite(n.url, url));
+  const thirdParty = [...new Set(scan.network.filter((n) => !sameSite(n.url, url)).map((n) => new URL(n.url).host))];
+  scan = { ...scan, network: ownNetwork, thirdPartyHostsNotTested: thirdParty };
+  const allowedOrigins = siteOrigins(url, ownNetwork.map((n) => new URL(n.url).origin));
   const globalTestCases = JSON.parse(await fs.readFile(GLOBAL_CASES_FILE, 'utf8')).cases || [];
 
-  const { data, meta } = await runAgentJson({ ...testsPrompt({ jira, url, scan, globalTestCases, signedIn: Boolean(storageState) }) });
+  const { data, meta } = await runAgentJson({ ...testsPrompt({ jira, url, scan, globalTestCases, signedIn: Boolean(storageState) }), track: { key, source: 'tests' } });
   const files = (data.files || []).filter((f) => SPEC_NAME.test(f.name));
   if (!files.length) throw new Error('Claude did not return any test files. Try again.');
   for (const f of files) {
@@ -171,12 +257,16 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * Runs Playwright with the server-owned config; report and traces land in `reportDir`.
  * With `previous` (the last results), runs only its failed tests and merges their new results into it.
  */
-export async function runPlaywright(dir, url, { label, storageState, previous, configDir = dir, reportDir = dir, filePrefix = '', outputDir = path.join(reportDir, '.output') }) {
-  const failed = previous?.rows.filter((r) => r.status === 'failed') || [];
+export async function runPlaywright(dir, url, { label, storageState, previous, files, unverified = [], unverifiedRows = [], configDir = dir, reportDir = dir, filePrefix = '', outputDir = path.join(reportDir, '.output') }) {
+  // Rows of scripts that are not verified: listed as skipped, never run.
+  const blocked = (r) => unverified.includes(r.file);
+  const failed = previous?.rows.filter((r) => r.status === 'failed' && !blocked(r)) || [];
   // Playwright matches --grep against the title path joined with spaces (… describe … title); anchoring on the
   // test's own describe blocks and title keeps similar or same-named tests elsewhere out.
   const titlePath = (r) => [...(r.describe ? r.describe.split(' › ') : []), r.title].map(escapeRegExp).join(' ');
   const grep = previous ? ['--grep', failed.map((r) => `(^|\\s)${titlePath(r)}$`).join('|')] : [];
+  // `files`: only these spec files are loaded (positional filters are regexes matched against the file path).
+  const fileFilters = files ? files.map((f) => `(^|[\\\\/])${escapeRegExp(f)}$`) : [];
   // Always (re)write the config: it is server-owned and must not be edited.
   const configPath = path.join(configDir, 'playwright.config.mjs');
   const reportPath = path.join(reportDir, 'report.json');
@@ -186,9 +276,10 @@ export async function runPlaywright(dir, url, { label, storageState, previous, c
   // Run Playwright's CLI with Node itself: Windows refuses to spawn the .cmd shim without a shell (EINVAL).
   const cli = path.join(ROOT, 'node_modules', '@playwright', 'test', 'cli.js');
   const started = Date.now();
+  const nothingToRun = (files && !files.length) || (previous && !failed.length);
   let timedOut = false;
-  const output = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cli, 'test', '--config', configPath, ...grep], {
+  const output = nothingToRun ? '' : await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [cli, 'test', '--config', configPath, ...fileFilters, ...grep], {
       cwd: configDir,
       env: { ...cleanEnv, TEST_BASE_URL: url, CI: '1', TEST_REPORT_FILE: reportPath, TEST_OUTPUT_DIR: outputDir, ...(storageState && { STORAGE_STATE: storageState }) },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -218,9 +309,9 @@ export async function runPlaywright(dir, url, { label, storageState, previous, c
   });
   if (timedOut) throw Object.assign(new Error(`${label} stopped: still running after the ${RUN_TIMEOUT_MS / 60_000}-minute limit.`), { status: 504 });
 
-  let report;
+  let report = { suites: [], errors: [] };
   try {
-    report = JSON.parse(await fs.readFile(reportPath, 'utf8'));
+    if (!nothingToRun) report = JSON.parse(await fs.readFile(reportPath, 'utf8'));
   } catch {
     throw Object.assign(new Error(`${label} could not run: ${output.trim().split('\n').slice(-3).join(' ') || 'no output'}`), { status: 500 });
   }
@@ -232,9 +323,10 @@ export async function runPlaywright(dir, url, { label, storageState, previous, c
   // A re-run keeps every earlier row and swaps in the new result of each test that failed. A failed test that is no
   // longer in the scripts (renamed or removed) is marked skipped rather than left failed forever.
   const gone = { status: 'skipped', error: null, skipReason: 'No longer in the test scripts. Run all tests to refresh.' };
+  const notVerified = { status: 'skipped', error: null, durationMs: null, skipReason: NOT_VERIFIED };
   const rows = previous
-    ? previous.rows.map((r) => (r.status === 'failed' ? fresh.find((f) => sameTest(f, r)) || { ...r, ...gone } : r))
-    : fresh;
+    ? previous.rows.map((r) => (blocked(r) ? { ...r, ...notVerified } : r.status === 'failed' ? fresh.find((f) => sameTest(f, r)) || { ...r, ...gone } : r))
+    : [...fresh, ...unverifiedRows];
   const now = new Date().toISOString();
   const results = {
     url,
@@ -250,15 +342,23 @@ export async function runPlaywright(dir, url, { label, storageState, previous, c
   await writeErrors(reportDir, results, filePrefix);
 }
 
-// Re-checks the saved scripts in case they were edited by hand since generation.
+// Re-checks the saved scripts in case they were edited by hand since generation, and splits them into the verified
+// ones (run) and the rest (listed as skipped, never loaded).
 async function checkSavedScripts(dir, url) {
   const meta = JSON.parse(await fs.readFile(path.join(dir, 'tests.json'), 'utf8').catch(() => 'null'));
   if (!meta) throw Object.assign(new Error('No tests yet. Generate them first.'), { status: 400 });
-  const allowedOrigins = new Set([...(meta.allowedOrigins || []), new URL(url).origin]);
+  // Origins saved by older versions may include third parties; only the site's own ones still count.
+  const allowedOrigins = siteOrigins(url, meta.allowedOrigins || []);
   for (const name of meta.files) {
     const problem = validateScript(await fs.readFile(path.join(dir, name), 'utf8'), allowedOrigins);
     if (problem) throw Object.assign(new Error(`${name} ${problem}. Regenerate the tests.`), { status: 422 });
   }
+  const files = await verifiedFiles(dir, meta.files);
+  const unverified = meta.files.filter((f) => !files.includes(f));
+  const unverifiedRows = (meta.tests || [])
+    .filter((t) => unverified.includes(t.file))
+    .map((t) => ({ file: t.file, title: t.title, status: 'skipped', durationMs: null, error: null, skipReason: NOT_VERIFIED }));
+  return { files, unverified, unverifiedRows };
 }
 
 const globalRunOptions = (dir) => ({ label: 'Global tests', configDir: path.dirname(GLOBAL_SPEC_FILE), reportDir: dir, filePrefix: 'global-' });
@@ -266,8 +366,10 @@ const globalRunOptions = (dir) => ({ label: 'Global tests', configDir: path.dirn
 /** Runs the saved scripts with Playwright on this machine. Uses no tokens. */
 export async function runTests(key, url) {
   const dir = testsDir(key);
-  await checkSavedScripts(dir, url);
-  await runPlaywright(dir, url, { label: 'Tests', storageState: await prepareSession(key, url) });
+  const scope = await checkSavedScripts(dir, url);
+  // Sign in only when something will actually run.
+  const storageState = scope.files.length ? await prepareSession(key, url) : undefined;
+  await runPlaywright(dir, url, { label: 'Tests', storageState, ...scope });
   return readTests(key);
 }
 
@@ -288,8 +390,8 @@ export async function rerunFailedTests(key, url) {
   if (!hasFailed(ticket) && !hasFailed(global)) throw Object.assign(new Error('The last run has no failed tests to re-run.'), { status: 400 });
   const storageState = await prepareSession(key, url);
   if (hasFailed(ticket)) {
-    await checkSavedScripts(dir, url);
-    await runPlaywright(dir, url, { label: 'Tests', storageState, previous: ticket });
+    const scope = await checkSavedScripts(dir, url);
+    await runPlaywright(dir, url, { label: 'Tests', storageState, previous: ticket, ...scope });
   }
   if (hasFailed(global)) await runPlaywright(dir, url, { ...globalRunOptions(dir), storageState, previous: global });
   return { ticket: await readTests(key), global: await readGlobalTests(key) };

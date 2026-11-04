@@ -35,7 +35,9 @@ export const api = {
   generateTests: (key, url) => request(`${t(key)}/tests/generate`, { method: 'POST', body: { url } }),
   runTests: (key, url) => request(`${t(key)}/tests/run`, { method: 'POST', body: { url } }),
   runGlobalTests: (key, url) => request(`${t(key)}/global-tests/run`, { method: 'POST', body: { url } }),
+  verifyScript: (key, file, hash, verified) => request(`${t(key)}/tests/verify`, { method: 'POST', body: { file, hash, verified } }),
   rerunFailedTests: (key, url) => request(`${t(key)}/tests/rerun-failed`, { method: 'POST', body: { url } }),
+  tokens: (key) => request(`${t(key)}/tokens`),
   login: (key) => request(`${t(key)}/login`),
   // On: sign in with the .env test account before runs. Off: forget the ticket's login.
   setLogin: (key, on) => (on ? request(`${t(key)}/login`, { method: 'PUT', body: { useEnv: true } }) : request(`${t(key)}/login`, { method: 'DELETE' })),
