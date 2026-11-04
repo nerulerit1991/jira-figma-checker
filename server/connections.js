@@ -6,6 +6,7 @@ import path from 'node:path';
 import { ROOT } from './config.js';
 import { cleanEnv, repairMcpServer, getClaudeMcpStatus } from './ai.js';
 import { getAgentProvider } from './agentSettings.js';
+import { codexCli } from './codexCli.js';
 
 const require = createRequire(import.meta.url);
 
@@ -198,9 +199,6 @@ function claudeCli() {
   return { cmd: process.platform === 'win32' ? 'npx.cmd' : 'npx', args: ['-y', '@anthropic-ai/claude-code'] };
 }
 
-function codexCli() {
-  return { cmd: process.env.CODEX_CLI_PATH || 'codex', args: [] };
-}
 
 /** Whether Playwright's Chromium (used for page capture) is installed. */
 export async function browserStatus() {

@@ -2,10 +2,12 @@
 import { spawn } from 'node:child_process';
 import { ROOT } from './config.js';
 import { cleanEnv } from './ai.js';
+import { codexCli } from './codexCli.js';
 
 export function readCodexAccount() {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.env.CODEX_CLI_PATH || 'codex', ['app-server'], { cwd: ROOT, env: cleanEnv, stdio: ['pipe', 'pipe', 'ignore'] });
+    const codex = codexCli();
+    const child = spawn(codex.cmd, [...codex.args, 'app-server'], { cwd: ROOT, env: cleanEnv, stdio: ['pipe', 'pipe', 'ignore'] });
     let buffer = '';
     const timer = setTimeout(() => finishWith(new Error('Codex did not report its account in time.')), 15_000);
     const send = (msg) => child.stdin.write(`${JSON.stringify(msg)}\n`);

@@ -195,12 +195,13 @@ async function answerChallenge(value) {
     challengeBusy.value = false;
   }
 }
-// While login is on or the ticket is busy (a run can turn login on by itself), re-read it every few seconds,
-// so a sign-in waiting for an OTP or CAPTCHA opens the pop-up.
+// Only while a sign-in can be happening (Sign in now, a run on the ticket, which may sign in again or turn login on
+// by itself, or a pop-up still open), re-read the login every few seconds so an OTP or CAPTCHA step opens the pop-up.
+// Signed in and idle, nothing can change, so nothing is requested.
 setInterval(() => {
   const key = selectedKey.value;
   if (!key || loginSaving.value || document.visibilityState !== 'visible') return;
-  if (loginOn.value || sessionBusy.value || ticketBusy(key)) refreshLogin(key);
+  if (sessionBusy.value || ticketBusy(key) || login.value?.challenge) refreshLogin(key);
 }, 2500);
 // Running jobs keyed "<ticket>:<action>", so work on one ticket never shows on another
 // and different actions on the same ticket (e.g. Jira and Figma) can run at once.
