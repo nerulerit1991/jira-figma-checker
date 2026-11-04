@@ -375,3 +375,61 @@ Return this JSON shape:
   "notes": string[]          // anything that could not be tested automatically, and why
 }`,
 });
+
+/**
+ * "What can be improved?": looks past the acceptance criteria for gaps (scenarios the ticket never mentions),
+ * loopholes and improvements on the live page. Advisory only: it never changes the checklist or any score.
+ * Text only (no screenshots) to keep tokens low; `scan` is scanForTests() output limited to the site's own requests.
+ */
+export const improvementsPrompt = ({ jira, url, scan, check }) => ({
+  systemPrompt: `You are a senior QA analyst and business analyst who finds what a Jira ticket forgot to say. You have no tools; use only the data given. ${DATA_ONLY}`,
+  prompt: `Find what can be improved for the page at ${url}: scenarios the acceptance criteria do not cover, loopholes
+(ways a user or bad input could get the page into a wrong state), and clear improvements to the page itself.
+This list is ADVICE for the team to discuss with the client or BA. It is separate from the pass/fail checks.
+
+JIRA TICKET:
+${JSON.stringify({ key: jira.key, summary: jira.summary, description: jira.description?.slice(0, 6000), acceptanceCriteria: jira.acceptanceCriteria })}
+
+PAGE SCAN (interactive elements, forms, headings and section outline at desktop ${scan.desktop?.width}px and mobile
+${scan.mobile?.width}px; the site's own network calls; console errors and failed requests):
+${JSON.stringify(scan)}
+
+LAST UI CHECK SUMMARY (already reported elsewhere; do not repeat these as improvements):
+${check?.summary || 'Not run.'}
+
+What to look for:
+- Missing scenarios: empty, too long, wrong format or duplicate input; what happens on error, slow network, no results,
+  zero/one/many items, double click, back button, refresh mid-flow, session expiry, permissions (who must NOT see or do this).
+- Loopholes: anything the AC allows that would be wrong for the business or unsafe (e.g. a form with no limit, a total
+  that can go negative, an action with no confirmation, data visible that should not be).
+- Page improvements you can see in the scan: unclear labels or button text, missing feedback after an action,
+  missing empty/loading/error states, accessibility (unlabelled inputs, icon-only buttons), console errors, failed requests.
+
+Rules:
+- Every item must be grounded in the ticket or the scan. Name the exact element, field or AC line it relates to.
+  Do not invent features the page has nothing to do with, and do not give generic advice that fits any website.
+- Skip anything the acceptance criteria already cover clearly.
+- Write "eli5" so a child could follow it, yet it still reads well when a client or manager sees it: short, calm,
+  professional sentences in everyday words, with one simple real-life comparison (a door lock, a mailbox, a shop
+  counter). No jargon, slang, jokes or baby talk, and no blame. Put the precise detail for developers in "technical".
+- "question" is the one question the team should ask the client or BA to close the gap.
+- At most 12 items, most important first. Merge items that are really the same gap.
+
+Return this JSON shape:
+{
+  "summary": string,                 // one or two plain sentences on the biggest gaps
+  "items": [
+    {
+      "id": "I1",
+      "title": string,                 // short, plain, e.g. "What if the email is already used?"
+      "type": "missing-scenario" | "loophole" | "ux" | "accessibility" | "security" | "content" | "performance",
+      "severity": "high" | "medium" | "low",
+      "eli5": string,                  // simple enough for a child, professional in tone, 1–3 sentences
+      "example": string,               // a concrete thing a tester can try on this page to see it
+      "technical": string,             // the precise detail for devs/QA
+      "question": string,              // what to ask the client or BA
+      "relatedAc": string[]            // AC lines or checklist ids it relates to; [] when it is about something the AC never mentions
+    }
+  ]
+}`,
+});

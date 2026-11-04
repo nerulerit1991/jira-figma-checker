@@ -32,6 +32,7 @@ export const api = {
   figmaProjects: () => request('/full-figma'),
   figmaFrames: (key, fileKey) => request(`${t(key)}/figma/frames${fileKey ? `?fileKey=${encodeURIComponent(fileKey)}` : ''}`),
   useFigmaFrame: (key, nodeId, fileKey) => request(`${t(key)}/figma/frame`, { method: 'POST', body: { nodeId, fileKey } }),
+  findImprovements: (key, url) => request(`${t(key)}/improvements`, { method: 'POST', body: { url } }),
   generateTests: (key, url) => request(`${t(key)}/tests/generate`, { method: 'POST', body: { url } }),
   runTests: (key, url) => request(`${t(key)}/tests/run`, { method: 'POST', body: { url } }),
   runGlobalTests: (key, url) => request(`${t(key)}/global-tests/run`, { method: 'POST', body: { url } }),

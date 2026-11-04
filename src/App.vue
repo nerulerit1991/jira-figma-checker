@@ -17,6 +17,7 @@ import DesignMatch from './components/DesignMatch.vue';
 import DesignChecklist from './components/DesignChecklist.vue';
 import ResponsiveReport from './components/ResponsiveReport.vue';
 import TestsPanel from './components/TestsPanel.vue';
+import Improvements from './components/Improvements.vue';
 import TokenBurst from './components/TokenBurst.vue';
 import { statusClass } from './status.js';
 
@@ -50,6 +51,8 @@ const figmaSaved = ref(null);
 const check = ref(null);
 // Errors-only view of the last check (check-errors.json); Re-check errors sends just these.
 const checkErrors = ref(null);
+// "What can be improved?" (improvements.json): advice beyond the AC; never part of a score.
+const improvements = ref(null);
 const tests = ref(null);
 const globalTests = ref({ cases: [], results: null });
 // The shared suite exists for every ticket, so Run is meaningful even before ticket tests are generated.
@@ -485,7 +488,7 @@ async function loadTicket(key) {
   const loadSequence = ++ticketLoadSequence;
   cancelAnimationFrame(scoreAnimationFrame);
   scoreProgress.value = 0;
-  ticket.value = jira.value = figma.value = check.value = checkErrors.value = tests.value = null;
+  ticket.value = jira.value = figma.value = check.value = checkErrors.value = improvements.value = tests.value = null;
   ticketTokens.value = null;
   figmaSaved.value = null;
   applyLogin(null);
@@ -506,6 +509,7 @@ async function loadTicket(key) {
     figmaSaved.value = data.figmaSaved;
     check.value = data.check;
     checkErrors.value = data.checkErrors;
+    improvements.value = data.improvements || null;
     tests.value = data.tests;
     globalTests.value = data.globalTests;
     ticketTokens.value = data.tokens || null;
@@ -543,7 +547,7 @@ async function run(action, request, apply) {
     if (selectedKey.value === key) apply?.(result);
     await loadTickets();
     // After an AI run, the agent's remaining allowance has changed.
-    if (['jira', 'figma', 'check', 'tests'].includes(action)) loadAgentUsage(true);
+    if (['jira', 'figma', 'check', 'tests', 'improvements'].includes(action)) loadAgentUsage(true);
     return true;
   } catch (e) {
     if (FIELD_ERRORS.has(action)) fieldErrors.value = { ...fieldErrors.value, [id]: e.message };
@@ -554,7 +558,7 @@ async function run(action, request, apply) {
     jobs.value = rest;
     if (['check', 'tests', 'run'].includes(action)) refreshLogin(key);
     // AI runs add to the ticket's token total, also when they fail after the agent answered.
-    if (['jira', 'figma', 'check', 'tests'].includes(action)) refreshTokens(key);
+    if (['jira', 'figma', 'check', 'tests', 'improvements'].includes(action)) refreshTokens(key);
   }
 }
 
@@ -737,6 +741,31 @@ async function generateTests() {
     generatePending.value = rest;
   }
 }
+
+// Lists gaps, loopholes and improvements beyond the AC (uses tokens). Regenerating replaces the saved list.
+async function findImprovements() {
+  const key = selectedKey.value;
+  if (isBusy('improvements')) return;
+  if (improvements.value) {
+    const ok = await confirmDialog.value.ask({
+      title: 'Regenerate suggestions?',
+      message: 'The AI reads the ticket and the live page again and replaces the saved list. This uses tokens again.',
+      confirmLabel: 'Regenerate',
+      danger: false,
+    });
+    if (!ok || selectedKey.value !== key) return;
+  }
+  const url = pageUrl.value;
+  noteRun('improvements', status.value?.runs && [`Suggestions via ${runLabel('analysis')}`]);
+  return run('improvements', (key) => api.findImprovements(key, url), (res) => {
+    improvements.value = res.data;
+    showBurst('improvements', res.data.ai);
+  });
+}
+const improvementCounts = computed(() => {
+  const items = improvements.value?.items || [];
+  return { total: items.length, high: items.filter((i) => i.severity === 'high').length };
+});
 
 function runTests() {
   if (isBusy('run') || !canRunAnyTests.value) return;
@@ -1249,6 +1278,46 @@ onMounted(async () => {
                 </TestsPanel>
               </div>
             </section>
+
+            <!-- 04 What can be improved? -->
+            <section class="card">
+              <div class="card-head tests-card-head">
+                <span class="step">04</span>
+                <h2>What can be improved? <span class="optional-tag">(Optional)</span></h2>
+                <span v-if="clickedRuns.improvements" class="run-chips">
+                  <span v-for="chip in clickedRuns.improvements" :key="chip" class="run-chip" :title="chip" :class="{ busy: isBusy('improvements') }">{{ chip }}</span>
+                </span>
+                <div class="tests-card-actions">
+                  <button class="regen-tab" :disabled="!jira || !pageUrl || isBusy('improvements')" @click="findImprovements">
+                    <span v-if="isBusy('improvements')" class="spinner" aria-hidden="true"></span>
+                    {{ isBusy('improvements') ? 'Thinking…' : improvements ? 'Regenerate' : 'Find improvements' }}
+                  </button>
+                </div>
+              </div>
+              <p v-if="improvements?.generatedAt" class="meta check-run-meta">
+                Last generated {{ formatDate(improvements.generatedAt) }}<template v-if="improvements.durationMs != null"> · {{ seconds(improvements.durationMs) }}</template> ·
+                {{ improvementCounts.total }} suggestion{{ improvementCounts.total === 1 ? '' : 's' }}<template v-if="improvementCounts.high"> · <span class="bad-text">{{ improvementCounts.high }} high</span></template>
+              </p>
+              <p v-if="!jira" class="hint">Retrieve the Jira ticket first.</p>
+              <p v-else-if="!pageUrl" class="hint">Enter the live page URL under Details / Data</p>
+              <p v-else-if="isBusy('improvements')" class="hint">Scanning the live page and reading the ticket for missing scenarios and loopholes…</p>
+              <p class="tests-cost-note imp-note">AI looks past the acceptance criteria for missing scenarios, loopholes and improvements, explained in plain words. These are suggestions to discuss with the client or BA; they never change any score.</p>
+              <div class="burst-host">
+                <TokenBurst :burst="burst" target="improvements" />
+                <template v-if="improvements">
+                  <p v-if="improvements.summary" class="imp-summary">{{ improvements.summary }}</p>
+                  <details v-if="improvements.items?.length" class="accordion" open>
+                    <summary>
+                      <span class="acc-title">Suggestions</span>
+                      <span class="score-chip" :class="{ bad: improvementCounts.high }">{{ improvementCounts.total }}</span>
+                      <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+                    </summary>
+                    <Improvements :items="improvements.items" />
+                  </details>
+                  <p v-else class="hint">No gaps found beyond the acceptance criteria.</p>
+                </template>
+              </div>
+            </section>
           </div>
 
           <!-- Right column widgets -->
@@ -1336,6 +1405,14 @@ onMounted(async () => {
                     <small>{{ check ? formatDate(check.checkedAt) : 'Not run yet' }}{{ runsText('check') }}</small>
                   </div>
                   <span class="cost" :title="sourceTokens('check').calls ? `${sourceTokens('check').calls} AI run(s) on this ticket` : undefined">{{ sourceTokens('check').tokens ? formatTokenCount(sourceTokens('check').tokens) : '' }}</span>
+                </li>
+                <li>
+                  <span class="src-dot" :class="{ on: improvements }"></span>
+                  <div>
+                    <p>Improvements</p>
+                    <small>{{ improvements ? `${improvementCounts.total} suggestions · ${formatDate(improvements.generatedAt)}` : 'Not generated' }}{{ runsText('improvements') }}</small>
+                  </div>
+                  <span class="cost" :title="sourceTokens('improvements').calls ? `${sourceTokens('improvements').calls} AI run(s) on this ticket` : undefined">{{ sourceTokens('improvements').tokens ? formatTokenCount(sourceTokens('improvements').tokens) : '' }}</span>
                 </li>
                 <li class="source-total">
                   <span></span>

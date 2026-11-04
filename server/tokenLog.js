@@ -3,7 +3,7 @@
 import { readJson, writeJson } from './store.js';
 
 const LOG = 'token-log';
-export const TOKEN_SOURCES = ['jira', 'figma', 'tests', 'check'];
+export const TOKEN_SOURCES = ['jira', 'figma', 'tests', 'check', 'improvements'];
 
 /** Same count the UI shows for one call: everything processed, including cached input. */
 export function tokensOf(meta) {

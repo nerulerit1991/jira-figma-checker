@@ -25,13 +25,13 @@ import {
   listFullFigmaProjects,
   fullFigmaLocation,
 } from './store.js';
-import { jiraPrompt, jiraChecklistPrompt, figmaPrompt, figmaBridgePrompt, checkPrompt, recheckPrompt } from './prompts.js';
+import { jiraPrompt, jiraChecklistPrompt, figmaPrompt, figmaBridgePrompt, checkPrompt, recheckPrompt, improvementsPrompt } from './prompts.js';
 import { itemsVerifiedBy } from './checklist.js';
 import { buildCheckErrors, viewportsFor, errorSections, inSections, mergeRecheck } from './checkErrors.js';
-import { capturePage, VIEWPORTS } from './capture.js';
+import { capturePage, scanForTests, VIEWPORTS } from './capture.js';
 import { parseFigmaUrl, withScheme } from './figma.js';
 import { fixConnection, getJobs, signOutAll, browserStatus, cancelOtherAgentLogins } from './connections.js';
-import { verifyScript, readTests, readGlobalTests, generateTests, runTests, runGlobalTests, rerunFailedTests } from './tests.js';
+import { verifyScript, readTests, readGlobalTests, generateTests, runTests, runGlobalTests, rerunFailedTests, sameSite } from './tests.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -205,8 +205,8 @@ async function requireTicket(rawKey) {
 
 app.get('/api/tickets/:key', async (req, res) => {
   const ticket = await requireTicket(req.params.key);
-  const [jira, figma, check, savedErrors, tests, globalTests, login] = await Promise.all([
-    ...['jira', 'figma', 'check', 'check-errors'].map((n) => readJson(ticket.key, n)),
+  const [jira, figma, check, savedErrors, improvements, tests, globalTests, login] = await Promise.all([
+    ...['jira', 'figma', 'check', 'check-errors', 'improvements'].map((n) => readJson(ticket.key, n)),
     readTests(ticket.key),
     readGlobalTests(ticket.key),
     getLoginSettings(ticket.key),
@@ -217,7 +217,7 @@ app.get('/api/tickets/:key', async (req, res) => {
   // Checks saved before check-errors.json existed get their errors built on the fly.
   // Rebuilt from the check so items the Jira step now gives to Playwright or marks not testable drop out.
   const checkErrors = check ? buildCheckErrors(check, jira?.checklist) : savedErrors;
-  res.json({ ticket, jira, figma, check, checkErrors, tests, globalTests, figmaSaved, login, tokens: await tokenTotals(ticket.key) });
+  res.json({ ticket, jira, figma, check, checkErrors, improvements, tests, globalTests, figmaSaved, login, tokens: await tokenTotals(ticket.key) });
 });
 
 // Tokens used by every AI call on this ticket, including re-fetches whose results were replaced.
@@ -657,6 +657,40 @@ app.post('/api/tickets/:key/global-tests/run', async (req, res) => {
   const url = requireUrl(req.body.url || pageUrl, 'Page URL');
   if (req.body.url) await updateTicket(key, { pageUrl: req.body.url });
   res.json(await testsJob(key, 'global', () => runGlobalTests(key, url)));
+});
+
+// ---- What can be improved? (advice beyond the acceptance criteria; never changes a score) ----
+
+// AI reads the ticket and a text scan of the live page (no screenshots) and lists gaps, loopholes and improvements.
+app.post('/api/tickets/:key/improvements', async (req, res) => {
+  const { key, pageUrl } = await requireTicket(req.params.key);
+  const url = requireUrl(req.body.url || pageUrl, 'Page URL');
+  if (req.body.url) await updateTicket(key, { pageUrl: req.body.url });
+  const jira = await readJson(key, 'jira');
+  if (!jira) throw httpError(400, 'Retrieve the Jira ticket first.');
+  const data = await once(`improvements:${key}`, async () => {
+    const started = Date.now();
+    const scan = await scanForTests(url, { storageState: await prepareSession(key, url) });
+    // Only the site's own requests: third-party hosts (analytics, CDNs) are not this ticket's concern.
+    scan.network = scan.network.filter((n) => sameSite(n.url, url));
+    const check = await readJson(key, 'check');
+    const { data, meta } = await runAgentJson({ ...improvementsPrompt({ jira, url, scan, check }), track: { key, source: 'improvements' } });
+    const items = (Array.isArray(data.items) ? data.items : []).slice(0, 12).map((item, i) => ({
+      ...item,
+      id: `I${i + 1}`,
+      severity: ['high', 'medium', 'low'].includes(item.severity) ? item.severity : 'low',
+      relatedAc: Array.isArray(item.relatedAc) ? item.relatedAc : [],
+    }));
+    return writeJson(key, 'improvements', {
+      summary: typeof data.summary === 'string' ? data.summary : '',
+      items,
+      url,
+      generatedAt: new Date().toISOString(),
+      durationMs: Date.now() - started,
+      ai: meta,
+    });
+  });
+  res.json({ data });
 });
 
 app.use((err, _req, res, _next) => {

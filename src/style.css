@@ -705,3 +705,6 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
 
 /* Under Page URL: tests act on the site, so never point them at production */
 .url-note { margin: 6px 0 0; font-size: 0.75rem; line-height: 1.4; color: #fbbf24; }
+.imp-summary { margin: 14px 0 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--inset); font-size: 0.86rem; color: #d4d3de; }
+.imp-note { color: var(--muted); }
+.optional-tag { font-weight: 400; font-size: 0.8em; color: var(--subtle); }
