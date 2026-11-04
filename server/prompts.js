@@ -37,15 +37,25 @@ Rules:
 - Keep one checklist item per independently verifiable requirement. Split a criterion only when it contains multiple independently verifiable requirements; preserve every part when splitting.
 - Do not turn CMS editing/publishing requirements into claims that can be verified on the live page alone; retain them as behavior checks and state the required action clearly.
 - Assign stable sequential IDs C1, C2, ... and a category that best fits each item.
-- Set verifyBy to the one step that can verify the item:
-  "live": provable from the page as it loads, from screenshots and the DOM: an element is present or visible, its text,
-  label, placeholder, required marker, link target (href), layout or style.
-  "playwright": needs interaction in a browser test: typing, clicking, submitting, a server response, an error or
-  validation message shown after an action, or where an action leads (e.g. invalid credentials show an error, a password
-  rule is enforced, a login attempt limit with a stated number).
-  "not-testable": neither can verify it on the page: it needs time to pass (e.g. every 30 days), prepared account or
-  database state (e.g. password history, an already expired password), records in another system or page, or a value
-  the ticket does not specify (e.g. an attempt limit with no number).
+- Set verifyBy by asking: "What does someone need to do to see the proof?" Nothing, it is on the page as it loads:
+  "live". Something on the page (click, select, type, hover, scroll, open, wait for a response): "playwright".
+  Something outside the page (time passing, database state, another system): "not-testable".
+  Apply these steps in order; the first that matches decides:
+  1. "not-testable": it needs time to pass (e.g. every 30 days), prepared account or database state (e.g. password
+     history, an already expired password), records or messages in another system or page (e.g. an email is sent), or a
+     value the ticket does not specify (e.g. an attempt limit with no number).
+  2. "playwright": the wording describes an action or its result: "when clicked", "after selecting", "on submit",
+     "filters the list", "shows an error if...", where an action leads, a server response, an error or validation
+     message shown after an action, a rule that is enforced (e.g. a password rule, an attempt limit with a stated number).
+  3. "playwright": it is about what is inside an interactive control: a dropdown's, select's or date picker's options,
+     values, default value, selected state or results (e.g. "the dropdown lists A, B and C", "the date range defaults to
+     the last 7 days").
+  4. "playwright": it is about something usually hidden when the page loads: inside a filter panel, menu, dropdown,
+     modal, drawer, accordion, a tab other than the first, a tooltip or popover, the navigation behind a mobile menu
+     button, or carousel slides after the first. This includes an item that only says such a control "is present"
+     (e.g. "the By Role filter dropdown is present"): a browser test can open its container and check it.
+  5. "live": everything else, provable from the page as it loads, from screenshots and the DOM: text, headings, images,
+     labels, placeholders, required markers, buttons and links visible on load, link targets (href), layout or style.
   "reason": for "not-testable", one short sentence on why and what manual QA needs; otherwise null.
 - Set source to "acceptance-criteria" when based on the acceptance criteria field and "description" when the field is empty and the description is used.
 - Return the same criteria and checklist for the same ticket content regardless of which Jira retrieval method supplied it.`,
@@ -301,6 +311,10 @@ test.skip(true, '<what it needs>') so the reason shows next to the item.
 Each test performs the item's action (click, type, submit) and asserts its outcome (the page or URL it leads to, the
 message shown, the request made). Do not write separate tests that only check an element's presence, text or href
 before the action: the static check of the live page covers those, and the action test already needs the element.
+Exception: an item about something hidden when the page loads, or inside a control (e.g. "the By Role dropdown is
+present" inside a collapsed "Filter by" panel, or a dropdown's options), has no action of its own. Its test opens what
+hides it (clicks the filter toggle, menu button, tab or accordion header; opens the dropdown) only when it is not
+already visible, then asserts the element, and its options or values when the item names them.
 
 PAGE SCAN (interactive elements at desktop ${scan.desktop?.width}px and mobile ${scan.mobile?.width}px, the network calls
 the page made, console errors and failed requests):
