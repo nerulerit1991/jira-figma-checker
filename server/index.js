@@ -24,6 +24,7 @@ import {
   writeFullFigma,
   listFullFigmaProjects,
   fullFigmaLocation,
+  resetTicketResults,
 } from './store.js';
 import { jiraPrompt, jiraChecklistPrompt, figmaPrompt, figmaBridgePrompt, checkPrompt, recheckPrompt, improvementsPrompt } from './prompts.js';
 import { itemsVerifiedBy } from './checklist.js';
@@ -278,7 +279,16 @@ app.post('/api/tickets/:key/jira', async (req, res) => {
   const cached = await readJson(key, 'jira');
   if (cached && !req.body.force) return res.json({ cached: true, data: cached });
 
+  // `reset`: the person confirmed a fresh start, so the old checklist's tests and results are removed once the new
+  // ticket data is saved (a failed retrieve leaves everything as it was).
   const data = await once(`jira:${key}`, async () => {
+    const jira = await retrieveJira();
+    if (req.body.reset) await resetTicketResults(key);
+    return jira;
+  });
+  res.json({ cached: false, data, reset: Boolean(req.body.reset) });
+
+  async function retrieveJira() {
     // Jira API tab: fetch the issue directly (free), then one small AI call with no tools builds the checklist.
     if (req.body.via === 'api') {
       if (!jiraApiEnabled()) {
@@ -319,8 +329,7 @@ app.post('/api/tickets/:key/jira', async (req, res) => {
       fetchedAt: new Date().toISOString(),
       ai: combineAiMeta(retrievalMeta, checklistMeta),
     });
-  });
-  res.json({ cached: false, data });
+  }
 });
 
 // Where saved Figma data came from; older files have no "via".

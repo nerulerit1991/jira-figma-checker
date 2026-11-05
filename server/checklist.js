@@ -27,6 +27,9 @@ export function testStatusOf(id, tests) {
     if (passed.length) return { status: 'passed', rows, detail: `${passed.length} test${passed.length === 1 ? '' : 's'} passed.` };
     return { status: 'skipped', rows, detail: rows.find((r) => r.skipReason)?.skipReason || 'Test skipped.' };
   }
+  // A test in a skip-only script never runs, so it is skipped before any run too, with the script's own reason.
+  const skipped = Object.values(tests?.verification || {}).flatMap((v) => v.skipped || []).filter((t) => idsInTitle(t.title).includes(id));
+  if (skipped.length) return { status: 'skipped', rows: [], detail: skipped[0].reason || 'Test skipped.' };
   const written = (tests?.tests || []).some((t) => (t.checklistIds || []).map((x) => String(x).toUpperCase()).includes(id) || idsInTitle(t.title).includes(id));
   return written
     ? { status: 'not-run', rows: [], detail: 'Test written but not run yet. Run the tests.' }

@@ -39,6 +39,20 @@ export async function writeJson(key, name, data) {
   return data;
 }
 
+/**
+ * Fresh start for a ticket's results after its Jira ticket is retrieved again: removes the test scripts and every test
+ * result (ticket and global), the Check UI results and screenshots, and the improvement suggestions. The ticket's
+ * links, Figma data, sign-in settings and token log stay.
+ */
+export async function resetTicketResults(key) {
+  const dir = ticketDir(key);
+  const files = ['check.json', 'check-errors.json', 'improvements.json', 'screenshot-desktop.jpg', 'screenshot-tablet.jpg', 'screenshot-mobile.jpg'];
+  await Promise.all([
+    fs.rm(path.join(dir, 'tests'), { recursive: true, force: true }),
+    ...files.map((name) => fs.rm(path.join(dir, name), { force: true })),
+  ]);
+}
+
 // Whole Figma files downloaded with the Figma API, shared by every ticket, grouped by project:
 // data/full-figma/<project>/<fileKey>.json, where <project> is the Figma file's name.
 export const FULL_FIGMA_DIR = path.join(DATA_DIR, 'full-figma');

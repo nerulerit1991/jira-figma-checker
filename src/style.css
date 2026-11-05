@@ -296,7 +296,9 @@ li.skip .evidence { color: var(--muted); }
 
 /* Sources */
 /* One column: each source block spans the full card width. */
-.sources { display: grid; grid-template-columns: 1fr; gap: 20px; }
+.sources { display: grid; grid-template-columns: 1fr; gap: 20px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.sources:disabled { opacity: 0.55; }
+.sources:disabled a { pointer-events: none; }
 /* Blocks bleed into the card padding so the alternating background spans the full card width,
    while the matching horizontal padding keeps content aligned with the card head.
    Only the tinted panel gets vertical padding, so the gaps between sections read equal. */

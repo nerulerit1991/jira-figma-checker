@@ -215,6 +215,9 @@ const generatingTestsPending = computed(() => Boolean(generatePending.value[sele
 const isBusy = (action, key = selectedKey.value) => Boolean(jobs.value[`${key}:${action}`]);
 const ticketBusy = (key) => Object.keys(jobs.value).some((id) => id.startsWith(`${key}:`));
 const anyBusy = computed(() => Object.keys(jobs.value).length > 0);
+// Check UI, tests and suggestions read the Details / Data section (links, sources, login), so it is locked while they run.
+const DATA_USERS = ['check', 'tests', 'run', 'improvements'];
+const dataLocked = computed(() => DATA_USERS.some((action) => isBusy(action)));
 const busyKeys = computed(() => [...new Set(Object.keys(jobs.value).map((id) => id.split(':')[0]))]);
 const error = ref('');
 
@@ -582,12 +585,27 @@ function setJiraVia(via) {
   store.set(`jiraVia:${selectedKey.value}`, via);
 }
 
-function retrieveJira() {
+// Retrieving again starts the ticket fresh: a new checklist would not match the old tests and results (they are
+// linked by checklist ids such as C3), so after a confirm they are all removed. Figma data and links stay.
+async function retrieveJira() {
+  const key = selectedKey.value;
   const force = Boolean(jira.value);
+  if (force) {
+    const ok = await confirmDialog.value.ask({
+      title: 'Retrieve the Jira ticket again?',
+      message: 'This resets the ticket: the checklist is rebuilt, and all tests (ticket and global), test results, Check UI results and suggestions are removed. Figma data and links are kept. Creating the checklist uses AI tokens.',
+      confirmLabel: 'Reset and retrieve',
+    });
+    if (!ok || selectedKey.value !== key) return;
+  }
   const via = jiraVia.value;
   noteRun('jira', status.value?.runs && jiraRunLabel.value);
-  return run('jira', (key) => api.fetchJira(key, force, via), (res) => {
+  return run('jira', (key) => api.fetchJira(key, force, via, force), (res) => {
     jira.value = res.data;
+    if (res.reset) {
+      tests.value = check.value = checkErrors.value = improvements.value = null;
+      globalTests.value = { ...globalTests.value, results: null, errors: null };
+    }
     if (!res.cached) showBurst('jira', res.data.ai);
     if (!figmaUrl.value && res.data.figmaLinks?.length) figmaUrl.value = res.data.figmaLinks[0];
   });
@@ -979,7 +997,8 @@ onMounted(async () => {
                 </span>
               </div>
 
-              <div class="sources">
+              <!-- A disabled fieldset disables every input, radio and button inside it. -->
+              <fieldset class="sources" :disabled="dataLocked" :title="dataLocked ? 'Locked while a check or test runs on these details' : null">
                 <div class="source">
                   <span class="field-label">Jira section</span>
                   <div class="via-row">
@@ -1129,7 +1148,8 @@ onMounted(async () => {
                     <button v-if="login.sessionSavedAt" class="ghost session-btn" :disabled="sessionBusy" @click="forgetSessionNow">Forget session</button>
                   </div>
                 </div>
-              </div>
+              </fieldset>
+              <p v-if="dataLocked" class="hint">Details are locked while a check or test runs on them.</p>
 
             </section>
 

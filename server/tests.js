@@ -110,7 +110,9 @@ export async function readTests(key) {
     Object.entries(scripts).map(([f, code]) => {
       const hash = hashOf(code);
       const approved = approvals[f]?.hash === hash;
-      return [f, { hash, verified: approved, verifiedAt: approved ? approvals[f].verifiedAt : null }];
+      // A skip-only script needs no review; its skipped tests and reasons are known before any run.
+      const skipped = skipOnlyTests(code);
+      return [f, { hash, verified: approved, verifiedAt: approved ? approvals[f].verifiedAt : null, skipOnly: Boolean(skipped), ...(skipped && { skipped }) }];
     }),
   );
   return { ...meta, results, errors, scripts, verification };
@@ -154,6 +156,32 @@ async function verifiedFiles(dir, files) {
 }
 
 const NOT_VERIFIED = 'Not verified. Review the script and click Verify to run it.';
+
+// ---- Skip-only scripts ----
+// A script whose every test starts with `test.skip(true, '<reason>')` runs nothing: Playwright stops each test at that
+// line, so any code after it is unreachable. Such a script needs no review. It is never loaded by Playwright either
+// (not even its top-level code); its rows and reasons are read from the source.
+// The check errs towards "needs review": a test written any other way (test.only, test.fail, a skip with a condition,
+// a first statement other than the skip) means the whole script must be verified as usual.
+const STR = String.raw`(?:'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|` + '`(?:[^`\\\\$]|\\\\.)*`)';
+const TEST_HEAD = new RegExp(
+  String.raw`\btest\s*\(\s*(${STR})\s*,\s*async\s*\(\s*(?:\{[\w\s,]*\})?\s*\)\s*=>\s*\{\s*test\.skip\(\s*true\s*,\s*(${STR})\s*,?\s*\)`,
+  'g',
+);
+const OTHER_TEST_FORMS = /\btest\.(?:only|fail|fixme|slow|step)\s*\(|(?<![.\w$])(?:it|describe)\s*\(|\btest\.describe\.(?:only|parallel|serial)\b/;
+const unquote = (literal) => literal.slice(1, -1).replace(/\\(.)/g, (_, c) => ({ n: '\n', t: '\t' })[c] ?? c);
+
+/** The tests of a skip-only script ({ title, reason }), or null when the script has a test that would run. */
+export function skipOnlyTests(code) {
+  if (typeof code !== 'string' || OTHER_TEST_FORMS.test(code)) return null;
+  const calls = code.match(/\btest\s*\(/g) || [];
+  const heads = [...code.matchAll(TEST_HEAD)];
+  if (!calls.length || heads.length !== calls.length) return null;
+  return heads.map((m) => ({ title: unquote(m[1]), reason: unquote(m[2]) }));
+}
+
+const skipOnlyRows = (file, code) =>
+  (skipOnlyTests(code) || []).map((t) => ({ file, title: t.title, status: 'skipped', durationMs: null, error: null, skipReason: t.reason }));
 
 export async function readGlobalTests(key) {
   const dir = testsDir(key);
@@ -257,10 +285,10 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * Runs Playwright with the server-owned config; report and traces land in `reportDir`.
  * With `previous` (the last results), runs only its failed tests and merges their new results into it.
  */
-export async function runPlaywright(dir, url, { label, storageState, previous, files, unverified = [], unverifiedRows = [], configDir = dir, reportDir = dir, filePrefix = '', outputDir = path.join(reportDir, '.output') }) {
+export async function runPlaywright(dir, url, { label, storageState, previous, files, unverified = [], unverifiedRows = [], skipOnly = {}, configDir = dir, reportDir = dir, filePrefix = '', outputDir = path.join(reportDir, '.output') }) {
   // Rows of scripts that are not verified: listed as skipped, never run.
   const blocked = (r) => unverified.includes(r.file);
-  const failed = previous?.rows.filter((r) => r.status === 'failed' && !blocked(r)) || [];
+  const failed = previous?.rows.filter((r) => r.status === 'failed' && !blocked(r) && !skipOnly[r.file]) || [];
   // Playwright matches --grep against the title path joined with spaces (… describe … title); anchoring on the
   // test's own describe blocks and title keeps similar or same-named tests elsewhere out.
   const titlePath = (r) => [...(r.describe ? r.describe.split(' › ') : []), r.title].map(escapeRegExp).join(' ');
@@ -325,7 +353,7 @@ export async function runPlaywright(dir, url, { label, storageState, previous, f
   const gone = { status: 'skipped', error: null, skipReason: 'No longer in the test scripts. Run all tests to refresh.' };
   const notVerified = { status: 'skipped', error: null, durationMs: null, skipReason: NOT_VERIFIED };
   const rows = previous
-    ? previous.rows.map((r) => (blocked(r) ? { ...r, ...notVerified } : r.status === 'failed' ? fresh.find((f) => sameTest(f, r)) || { ...r, ...gone } : r))
+    ? previous.rows.map((r) => (skipOnly[r.file] ? skipOnly[r.file].find((x) => x.title === r.title) || { ...r, ...gone } : blocked(r) ? { ...r, ...notVerified } : r.status === 'failed' ? fresh.find((f) => sameTest(f, r)) || { ...r, ...gone } : r))
     : [...fresh, ...unverifiedRows];
   const now = new Date().toISOString();
   const results = {
@@ -353,12 +381,18 @@ async function checkSavedScripts(dir, url) {
     const problem = validateScript(await fs.readFile(path.join(dir, name), 'utf8'), allowedOrigins);
     if (problem) throw Object.assign(new Error(`${name} ${problem}. Regenerate the tests.`), { status: 422 });
   }
-  const files = await verifiedFiles(dir, meta.files);
-  const unverified = meta.files.filter((f) => !files.includes(f));
+  // Skip-only scripts are never loaded: their rows (with the script's own skip reasons) come from the source.
+  const skipOnly = {};
+  for (const name of meta.files) {
+    const rows = skipOnlyRows(name, await fs.readFile(path.join(dir, name), 'utf8'));
+    if (rows.length) skipOnly[name] = rows;
+  }
+  const files = (await verifiedFiles(dir, meta.files)).filter((f) => !skipOnly[f]);
+  const unverified = meta.files.filter((f) => !files.includes(f) && !skipOnly[f]);
   const unverifiedRows = (meta.tests || [])
     .filter((t) => unverified.includes(t.file))
     .map((t) => ({ file: t.file, title: t.title, status: 'skipped', durationMs: null, error: null, skipReason: NOT_VERIFIED }));
-  return { files, unverified, unverifiedRows };
+  return { files, unverified, unverifiedRows: [...Object.values(skipOnly).flat(), ...unverifiedRows], skipOnly };
 }
 
 const globalRunOptions = (dir) => ({ label: 'Global tests', configDir: path.dirname(GLOBAL_SPEC_FILE), reportDir: dir, filePrefix: 'global-' });

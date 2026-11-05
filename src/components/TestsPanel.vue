@@ -16,10 +16,16 @@ defineEmits(['verify']);
 
 const FILE_LABELS = { 'behavior.spec.js': 'Functionality', 'api.spec.js': 'API & health' };
 
+// Before a run, a test of a skip-only script is already known to be skipped, with its reason.
+const pendingRow = (t) => {
+  const skip = props.tests.verification?.[t.file]?.skipped?.find((s) => s.title === t.title);
+  return skip ? { file: t.file, title: t.title, status: 'skipped', skipReason: skip.reason } : { file: t.file, title: t.title, status: 'todo' };
+};
+
 // Last run's rows grouped by file; before the first run, list what was generated.
 const groups = computed(() => {
   if (!props.tests) return [];
-  const rows = props.tests.results?.rows ?? props.tests.tests.map((t) => ({ file: t.file, title: t.title, status: 'todo' }));
+  const rows = props.tests.results?.rows ?? props.tests.tests.map(pendingRow);
   const byFile = new Map();
   for (const r of rows) {
     if (!byFile.has(r.file)) byFile.set(r.file, []);
@@ -37,7 +43,8 @@ const rowClass = (status) => status === 'passed' ? 'pass' : status === 'failed' 
 const verifiedOf = (file) => Boolean(props.tests?.verification?.[file]?.verified);
 // A script with no tests runs nothing, so it is not shown for review and needs no verification.
 const hasTests = (file) => props.tests?.scripts?.[file] != null && hasTestCalls(props.tests.scripts[file]);
-const needsReview = (file) => hasTests(file) && !verifiedOf(file);
+// A skip-only script (every test is test.skip(true, …)) runs nothing either, so it needs no verification.
+const needsReview = (file) => hasTests(file) && !verifiedOf(file) && !props.tests?.verification?.[file]?.skipOnly;
 // Scripts outside the two sections (none today) are still listed for review at the bottom.
 const otherScripts = computed(() => Object.keys(props.tests?.scripts || {}).filter((f) => !FILE_LABELS[f] && hasTests(f)));
 const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status === 'passed').length}/${rows.length}` : '';
