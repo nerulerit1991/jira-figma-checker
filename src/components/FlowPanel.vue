@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import FlowNode from './FlowNode.vue';
 import { screenState, checkedScreens, itemsOnScreen } from '../../server/flowScope.js';
 
@@ -17,6 +17,9 @@ const props = defineProps({
   locked: { type: Boolean, default: false },
 });
 const emit = defineEmits(['allow', 'run']);
+
+// Bumped each time the panel opens so the chart remounts and its green reveal animation plays again.
+const replay = ref(0);
 
 const screens = computed(() => (props.flow?.screens || []).filter((s) => s.kind !== 'start'));
 const checked = computed(() => checkedScreens(props.flow));
@@ -55,7 +58,7 @@ const skippedNotes = computed(() => {
 </script>
 
 <template>
-  <details class="accordion flow">
+  <details class="accordion flow" @toggle="(e) => e.target.open && replay++">
     <summary>
       <span class="acc-title">Interaction flow</span>
       <span v-if="screens.length" class="score-chip">{{ screens.length + 1 }} screens</span>
@@ -70,7 +73,7 @@ const skippedNotes = computed(() => {
     <template v-else-if="flow">
       <p v-if="!screens.length" class="hint">“{{ flow.startName }}” has no prototype links to another frame or overlay in Figma, so Check UI checks this frame only.</p>
       <template v-else>
-        <div class="flow-chart" role="group" aria-label="Screens and the clicks between them">
+        <div :key="replay" class="flow-chart" role="group" aria-label="Screens and the clicks between them">
           <FlowNode
             :screen="start"
             :screens="flow.screens"

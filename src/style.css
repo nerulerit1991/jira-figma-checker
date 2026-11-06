@@ -744,20 +744,12 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
   display: flex; flex-direction: column; gap: 4px; flex: none; width: 190px; padding: 10px 12px;
   border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface);
 }
-.fn-card.start { border-color: var(--accent); }
-.fn-card.pass { border-color: rgba(74, 222, 128, 0.5); }
-.fn-card.fail { border-color: rgba(248, 113, 113, 0.55); }
-.fn-card.unreached { border-color: rgba(248, 113, 113, 0.55); border-style: dashed; }
 .fn-card.not-in-ticket, .fn-card.risky { opacity: 0.55; border-style: dashed; }
 .fn-card .fn-allow { align-self: flex-start; height: 24px; padding: 0 8px; font-size: 0.72rem; }
 .fn-card.risky .fn-allow { opacity: 1; }
 .fn-top { display: flex; align-items: center; gap: 6px; }
 .fn-top input[type=checkbox] { flex: none; width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--accent); }
 .fn-num { font-family: var(--mono); font-size: 0.7rem; color: var(--subtle); }
-.fn-dot { width: 8px; height: 8px; margin-left: auto; border-radius: 50%; }
-.fn-dot.pass { background: var(--green); }
-.fn-dot.fail { background: #ff4d5e; }
-.fn-dot.unreached { border: 1.5px dashed #ff4d5e; }
 .fn-name { font-size: 0.84rem; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .fn-meta { font-family: var(--mono); font-size: 0.68rem; color: var(--subtle); }
 .fn-card .tag.risky { align-self: flex-start; }
@@ -777,5 +769,37 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
   border-left: 8px solid var(--border-strong); border-top: 5px solid transparent; border-bottom: 5px solid transparent;
 }
 
+/* Reveal, one step at a time until everything is green: the start card's border draws itself in (0 to 100%),
+   then the arrow to the next screen fills left to right, then that card's border, and so on.
+   --d is a screen's depth from the start; each depth takes one card step plus one arrow step. */
+.flow-chart { --fn-t: 0.5s; --fn-green: var(--green); }
+.fn-card { position: relative; }
+.fn-ring { position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); overflow: visible; pointer-events: none; }
+.fn-ring path {
+  fill: none; stroke: var(--fn-green); stroke-width: 1.5px; stroke-dasharray: 100; stroke-dashoffset: 100;
+  animation: fn-draw var(--fn-t) linear forwards;
+  animation-delay: calc(var(--d, 0) * 2 * var(--fn-t));
+}
+@keyframes fn-draw { to { stroke-dashoffset: 0; } }
+.fn-fill {
+  position: absolute; z-index: 1; left: 0; right: 0; top: -1.5px; height: 0; border-top: 1.5px solid var(--fn-green);
+  clip-path: inset(-6px 100% -6px 0);
+  animation: fn-mask var(--fn-t) linear forwards;
+  animation-delay: calc((var(--d, 0) * 2 + 1) * var(--fn-t));
+}
+.fn-fill::after {
+  content: ''; position: absolute; right: -1px; top: -5.5px; width: 0; height: 0;
+  border-left: 8px solid var(--fn-green); border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+}
+@keyframes fn-mask { to { clip-path: inset(-6px -2px -6px 0); } }
+@media (prefers-reduced-motion: reduce) {
+  .fn-ring path, .fn-fill { animation: none !important; }
+  .fn-ring path { stroke-dashoffset: 0; }
+  .fn-fill { clip-path: none; }
+}
+
 /* Note beside a card title, e.g. "Jira API and Figma API are recommended" on Details / Data. */
 .card-note { min-width: 0; font-size: 0.76rem; color: var(--subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Text for screen readers only */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
