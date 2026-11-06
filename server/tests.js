@@ -7,7 +7,7 @@ import { DATA_DIR, ROOT } from './config.js';
 import { writeFileAtomic } from './store.js';
 import { cleanEnv, runAgentJson } from './ai.js';
 import { scanForTests } from './capture.js';
-import { testsPrompt } from './prompts.js';
+import { pagePath, testsPrompt } from './prompts.js';
 
 // Generated tests live with the ticket, so deleting the ticket deletes them too:
 //   data/<KEY>/tests/*.spec.js, playwright.config.mjs, tests.json (what was generated), results.json (last run),
@@ -66,6 +66,24 @@ export function sameSite(origin, pageUrl) {
 }
 
 const siteOrigins = (url, origins) => new Set([new URL(url).origin, ...origins.filter((o) => sameSite(o, url))]);
+
+// ---- Opening the page under test ----
+// baseURL is the full page URL (e.g. https://site/about), but Playwright resolves page.goto('/') against the site root,
+// so it would open the home page instead. Tests must open the page by its own path ('/about').
+const ROOT_GOTO = /(\bpage\s*\.\s*goto\s*\(\s*)(['"`])(\/?)\2/g;
+
+/** Points page.goto('/') and page.goto('') at the page under test, so the test cannot land on the site's home page. */
+export function openPageUnderTest(content, url) {
+  const target = pagePath(url);
+  if (target === '/') return content;
+  return content.replace(ROOT_GOTO, (_, call, quote) => `${call}${quote}${target.replaceAll(quote, `\\${quote}`)}${quote}`);
+}
+
+/** Why a saved script would open the wrong page for `url`, or null. */
+function opensSiteRoot(content, url) {
+  if (pagePath(url) === '/' || !new RegExp(ROOT_GOTO.source).test(content)) return null;
+  return `opens the site's home page (page.goto('/')) instead of ${pagePath(url)}`;
+}
 
 /**
  * Generated code runs on this machine, and the Jira text it was written from is untrusted.
@@ -203,7 +221,9 @@ export async function generateTests(key, url, jira) {
   const globalTestCases = JSON.parse(await fs.readFile(GLOBAL_CASES_FILE, 'utf8')).cases || [];
 
   const { data, meta } = await runAgentJson({ ...testsPrompt({ jira, url, scan, globalTestCases, signedIn: Boolean(storageState) }), track: { key, source: 'tests' } });
-  const files = (data.files || []).filter((f) => SPEC_NAME.test(f.name));
+  const files = (data.files || [])
+    .filter((f) => SPEC_NAME.test(f.name))
+    .map((f) => (typeof f.content === 'string' ? { ...f, content: openPageUnderTest(f.content, url) } : f));
   if (!files.length) throw new Error('Claude did not return any test files. Try again.');
   for (const f of files) {
     const problem = validateScript(f.content, allowedOrigins);
@@ -378,7 +398,9 @@ async function checkSavedScripts(dir, url) {
   // Origins saved by older versions may include third parties; only the site's own ones still count.
   const allowedOrigins = siteOrigins(url, meta.allowedOrigins || []);
   for (const name of meta.files) {
-    const problem = validateScript(await fs.readFile(path.join(dir, name), 'utf8'), allowedOrigins);
+    const content = await fs.readFile(path.join(dir, name), 'utf8');
+    // Scripts saved before the page-path fix open the home page, so their results would describe the wrong page.
+    const problem = validateScript(content, allowedOrigins) || opensSiteRoot(content, url);
     if (problem) throw Object.assign(new Error(`${name} ${problem}. Regenerate the tests.`), { status: 422 });
   }
   // Skip-only scripts are never loaded: their rows (with the script's own skip reasons) come from the source.

@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import globalTestCatalog from '../../data/global-test-cases/cases.json';
 import ScriptReview from './ScriptReview.vue';
+import FailureDetails from './FailureDetails.vue';
 import { hasTestCalls } from '../highlight.js';
 
 const props = defineProps({
@@ -33,6 +34,12 @@ const groups = computed(() => {
   }
   return [...byFile].map(([file, items]) => ({ file, label: FILE_LABELS[file] || file, items }));
 });
+
+// The element a test acts on, in plain words, from the generator's "target". Code locators are not shown to users.
+function targetOf(r) {
+  const meta = props.tests?.tests?.find((t) => t.file === r.file && t.title === r.title);
+  return meta?.target?.element ? meta.target : null;
+}
 
 const seconds = (ms) => (ms == null ? '' : `${(ms / 1000).toFixed(1)}s`);
 const globalCases = computed(() => props.globalTests?.cases?.length ? props.globalTests.cases : globalTestCatalog.cases);
@@ -82,7 +89,7 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
             <div class="row-body">
               <div class="item">{{ testCase.title }}</div>
               <div class="evidence">{{ testCase.covers }}</div>
-              <pre v-if="globalResult(testCase)?.error" class="test-error">{{ globalResult(testCase).error }}</pre>
+              <FailureDetails v-if="globalResult(testCase)?.error" :error="globalResult(testCase).error" />
               <div v-if="globalResult(testCase)?.skipReason" class="evidence">Skipped: {{ globalResult(testCase).skipReason }}</div>
             </div>
             <div class="row-tags"><span class="tag">{{ testCase.id }}</span></div>
@@ -108,7 +115,7 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
       <ul v-if="groupFor('api.spec.js')" class="checklist suite-list">
         <li v-for="(r, i) in groupFor('api.spec.js').items" :key="i" :class="r.status === 'passed' ? 'pass' : r.status === 'failed' ? 'fail' : r.status === 'skipped' ? 'skip' : 'todo'">
           <span class="mark" :aria-label="r.status"><svg v-if="statusSvg(r.status) === 'check'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7" /></svg><svg v-else-if="statusSvg(r.status) === 'cross'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg><svg v-else-if="statusSvg(r.status) === 'skip'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 12h12" /></svg></span>
-          <div class="row-body"><div class="item">{{ r.title }}</div><pre v-if="r.error" class="test-error">{{ r.error }}</pre><div v-if="r.skipReason" class="evidence">Skipped: {{ r.skipReason }}</div></div>
+          <div class="row-body"><div class="item">{{ r.title }}</div><FailureDetails v-if="r.error" :error="r.error" /><div v-if="r.skipReason" class="evidence">Skipped: {{ r.skipReason }}</div></div>
           <div class="row-tags"><span v-if="r.durationMs != null" class="tag">{{ seconds(r.durationMs) }}</span></div>
         </li>
       </ul>
@@ -133,7 +140,15 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
       <ul v-if="groupFor('behavior.spec.js') || uncovered.length" class="checklist suite-list">
         <li v-for="(r, i) in groupFor('behavior.spec.js')?.items || []" :key="i" :class="r.status === 'passed' ? 'pass' : r.status === 'failed' ? 'fail' : r.status === 'skipped' ? 'skip' : 'todo'">
           <span class="mark" :aria-label="r.status"><svg v-if="statusSvg(r.status) === 'check'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7" /></svg><svg v-else-if="statusSvg(r.status) === 'cross'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg><svg v-else-if="statusSvg(r.status) === 'skip'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 12h12" /></svg></span>
-          <div class="row-body"><div class="item">{{ r.title }}</div><pre v-if="r.error" class="test-error">{{ r.error }}</pre><div v-if="r.skipReason" class="evidence">Skipped: {{ r.skipReason }}</div></div>
+          <div class="row-body">
+            <div class="item">{{ r.title }}</div>
+            <div v-if="targetOf(r)" class="test-target">
+              <span class="tt-label">Element</span>
+              <template v-if="targetOf(r).section"><span>{{ targetOf(r).section }}</span><span class="tt-sep">›</span></template>
+              <span>{{ targetOf(r).element }}</span>
+            </div>
+            <FailureDetails v-if="r.error" :error="r.error" :target="targetOf(r)" /><div v-if="r.skipReason" class="evidence">Skipped: {{ r.skipReason }}</div>
+          </div>
           <div class="row-tags"><span v-if="r.durationMs != null" class="tag">{{ seconds(r.durationMs) }}</span></div>
         </li>
         <li v-for="item in uncovered" :key="item.id" class="todo">
@@ -167,3 +182,9 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
     </div>
   </div>
 </template>
+
+<style scoped>
+.test-target { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; margin-top: 4px; font-size: 0.78rem; color: var(--muted); }
+.tt-label { font-family: var(--mono); font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--subtle); }
+.tt-sep { color: var(--subtle); }
+</style>
