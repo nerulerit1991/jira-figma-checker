@@ -155,6 +155,31 @@ export const DESIGN_CATEGORIES = [
   { category: 'Copy', aspects: 'visible text matches the design' },
 ];
 
+// How Figma is compared with the live page; shared by Check UI and the interaction-flow screens.
+const DESIGN_RULES = `   Match Figma elements to live elements by section, text and role. Allow ±2px for spacing and sizes;
+   compare where things visibly sit: an icon's Figma spacing plus its "visualOffset" is where the drawing appears, and a
+   live SVG or image box can also hold empty space, so an icon-position difference explained by a frame inset or SVG
+   whitespace is a match; if you cannot tell, leave it out rather than report it.
+   Exact values come from "specs" and "typography". Numbers inside prose fields (summary, layout, spacing notes) are
+   approximate and may be measured from a parent frame, so never fail an element on a prose number alone.
+   Compare absolute x positions only when the live width equals the Figma frame width; never scale or offset Figma
+   positions to another width, at other widths compare sizes and spacing only; treat hex vs rgb
+   of the same colour and font fallbacks of the same family as matches; compare text transform by how the text renders.
+   Some differences are mistakes in the Figma file, not the site: repeated elements with the same role (cards in one grid,
+   items in one list) whose Figma values differ from each other, or fractional sizes such as 27.404px from a layer scaled
+   with the Scale tool. When the live page is consistent and matches the clean or majority Figma value, report these with
+   "source": "figma" (wording like "Cards 2–6 are 27.4px in Figma vs 30px on card 1; likely scaled in Figma"). They never
+   make a category fail, and their DESIGN DETAIL rows are "match": true with the explanation in "note".
+   Text in Figma can have "segments" with different styles inside one layer; compare each segment with the live text.
+   A category passes only if everything in it matches. For each failure add one brief issue naming the section and the element,
+   e.g. section "Capital Introduction", issue: "Heading 'Capital Introduction' is #333333, design is #111111".
+   Merge repeats of the same problem into one issue. At most 8 issues per category.
+   Every issue must say exactly where to fix it: "section" is the part of the page a developer would recognise (the live
+   section's heading, or the Figma section when it names a real part of the page), never a bare layer name such as
+   "Frame 12" or "About us v2"; "element" names the element by its role and visible text, e.g. Name "Amit Dighe" or
+   Card titles 2–6; "selector" is that element's "el" from LIVE COMPUTED STYLES (e.g. "h3.team-modal-name"), or null
+   when the problem is only in Figma or the element is not in the styles. Start "issue" with the element too.`;
+
 /**
  * @param {object} p
  * @param {object} p.page result of capturePage(); its tiles are attached as images in the same order
@@ -196,24 +221,7 @@ Do four things:
    ${NAVIGATION_RULE}
 2. DESIGN CHECKLIST (only if Figma specs are given): for each category below decide if the live page follows the Figma design.
 ${DESIGN_CATEGORIES.map((c) => `   - ${c.category}: ${c.aspects}`).join('\n')}
-   Match Figma elements to live elements by section, text and role. Allow ±2px for spacing and sizes;
-   compare where things visibly sit: an icon's Figma spacing plus its "visualOffset" is where the drawing appears, and a
-   live SVG or image box can also hold empty space, so an icon-position difference explained by a frame inset or SVG
-   whitespace is a match; if you cannot tell, leave it out rather than report it.
-   Exact values come from "specs" and "typography". Numbers inside prose fields (summary, layout, spacing notes) are
-   approximate and may be measured from a parent frame, so never fail an element on a prose number alone.
-   Compare absolute x positions only when the live width equals the Figma frame width; never scale or offset Figma
-   positions to another width, at other widths compare sizes and spacing only; treat hex vs rgb
-   of the same colour and font fallbacks of the same family as matches; compare text transform by how the text renders.
-   Some differences are mistakes in the Figma file, not the site: repeated elements with the same role (cards in one grid,
-   items in one list) whose Figma values differ from each other, or fractional sizes such as 27.404px from a layer scaled
-   with the Scale tool. When the live page is consistent and matches the clean or majority Figma value, report these with
-   "source": "figma" (wording like "Cards 2–6 are 27.4px in Figma vs 30px on card 1; likely scaled in Figma"). They never
-   make a category fail, and their DESIGN DETAIL rows are "match": true with the explanation in "note".
-   Text in Figma can have "segments" with different styles inside one layer; compare each segment with the live text.
-   A category passes only if everything in it matches. For each failure add one brief issue naming the section and the element,
-   e.g. section "Capital Introduction", issue: "Heading 'Capital Introduction' is #333333, design is #111111".
-   Merge repeats of the same problem into one issue. At most 8 issues per category.
+${DESIGN_RULES}
 3. DESIGN DETAIL: the individual property comparisons behind step 2, mismatches first, at most 40 rows.
 4. RESPONSIVE: for desktop, tablet and mobile decide whether the layout is broken, using the scan and the screenshots
    (overlapping or cut-off content, horizontal scrolling, unreadable text, cramped or squashed elements, navigation that does not adapt).
@@ -224,11 +232,11 @@ Return this JSON shape:
   "results": [ { "id": string, "item": string, "passed": boolean, "confidence": "high" | "medium" | "low", "evidence": string } ],
   "designChecklist": [
     { "category": ${DESIGN_CATEGORIES.map((c) => JSON.stringify(c.category)).join(' | ')}, "passed": boolean,
-      "issues": [ { "section": string, "element": string, "issue": string, "source": "live" | "figma" } ] }
+      "issues": [ { "section": string, "element": string, "selector": string | null, "issue": string, "source": "live" | "figma" } ] }
   ] | null,
   "designMatch": {
     "comparedAt": "${compareViewport}",
-    "rows": [ { "section": string | null, "element": string, "property": string, "figma": string, "live": string, "match": boolean, "note": string | null } ]
+    "rows": [ { "section": string | null, "element": string, "selector": string | null, "property": string, "figma": string, "live": string, "match": boolean, "note": string | null } ]
   } | null,
   "responsive": [ { "viewport": "desktop" | "tablet" | "mobile", "width": number, "passed": boolean, "issues": string[] } ],
   "summary": string
@@ -281,7 +289,7 @@ Figma frame width. A design category passes only when every one of its previous 
 Return this JSON shape:
 {
   "results": [ { "id": string, "passed": boolean, "confidence": "high" | "medium" | "low", "evidence": string } ],
-  "designChecklist": [ { "category": string, "passed": boolean, "issues": [ { "section": string, "element": string, "issue": string, "source": "live" } ] } ],
+  "designChecklist": [ { "category": string, "passed": boolean, "issues": [ { "section": string, "element": string, "selector": string | null, "issue": string, "source": "live" } ] } ],
   "designMatch": { "rows": [ { "section": string | null, "element": string, "property": string, "figma": string, "live": string, "match": boolean, "note": string | null } ] },
   "responsive": [ { "viewport": "desktop" | "tablet" | "mobile", "width": number, "passed": boolean, "issues": string[] } ],
   "summary": string                // what is fixed and what is still wrong, one or two sentences
@@ -432,4 +440,105 @@ Return this JSON shape:
     }
   ]
 }`,
+});
+
+/**
+ * One screen of the interaction flow (a page or modal reached by clicking from the ticket's frame), compared with
+ * the Figma frame the prototype link points to, plus its responsive layout. The Jira checklist stays with Check UI.
+ * @param {object} p.screen flow screen: name, kind ("page" | "overlay"), steps clicked to reach it
+ * @param {object} p.capture { compare, others }: captureScreen() results at the viewport matching the Figma frame
+ *   (with styles) and at the other viewports reached (tiles and layout scan only); images follow in that order
+ */
+export const flowScreenPrompt = ({ url, screen, figma, capture, checklist = [] }) => {
+  const isOverlay = screen.kind === 'overlay';
+  const path = screen.steps.map((s) => `click "${s.text}"`).join(' → ');
+  const { compare, others } = capture;
+  const all = [compare, ...others];
+  let n = 0;
+  const shots = all.flatMap((c) =>
+    c.tiles.map((t) => `Image ${++n}: ${c.viewport} ${c.width}px, ${isOverlay && c.scoped ? 'the open modal only' : `page y ${t.from}–${t.to}px of ${c.pageHeight}px`}`),
+  );
+  const notes = all.filter((c) => c.note).map((c) => `${c.viewport}: ${c.note}`);
+  const layout = Object.fromEntries(all.map((c) => [c.viewport, c.layout]));
+  return {
+    systemPrompt: `You are a meticulous UI QA reviewer. You compare one screen of a live web app, reached by clicking through it, with its Figma design, and judge its responsive layout. You have no tools; use only the screenshots and data given. ${DATA_ONLY}`,
+    prompt: `Starting at ${url}, the browser did: ${path}. It is now on "${screen.name}" (${isOverlay ? 'a modal or overlay opened on top of the page' : 'a page'}${compare.landedUrl ? `, URL ${compare.landedUrl}` : ''}).
+The same clicks were repeated at each viewport below.
+${notes.length ? `Notes: ${notes.join(' ')}
+` : ''}${shots.join('\n')}
+
+FIGMA DESIGN SPECS for "${screen.name}"${figma?.frameWidth ? ` (frame is ${figma.frameWidth}px wide)` : ''}:
+${JSON.stringify(figma)}
+
+LIVE COMPUTED STYLES at ${compare.viewport} (${compare.width}px${isOverlay && compare.scoped ? '; boxes measured from the modal\'s top-left, like the Figma overlay frame' : ''}). Each entry: section, element, own text,
+box "x,y WxH", padding, margin, gap, font "weight size/line-height family", letterSpacing, textTransform, colours:
+${JSON.stringify(compare.styles)}
+
+${checklist.length ? `CHECKLIST (the Jira ticket's items about this screen):
+${JSON.stringify(checklist)}
+
+` : ''}AUTOMATED LAYOUT SCAN of the ${isOverlay ? 'page with the modal open' : 'full page'} per viewport (horizontal scroll, elements past the viewport edge, clipped text,
+text under 12px and tap targets under 24px on mobile):
+${JSON.stringify(layout)}
+
+Do ${checklist.length ? 'four' : 'three'} things:
+${checklist.length ? `0. CHECKLIST: mark each item passed only when the screenshots or data clearly show it on this screen. The clicks above
+   really happened and this screen is where they landed, so an item saying those clicks open this screen passes with
+   confidence "high" when the screenshots show the right screen. Behaviour you cannot see statically is not passed; say why.
+` : ''}1. DESIGN CHECKLIST: for each category below decide if this screen at ${compare.viewport} follows its Figma frame.
+${DESIGN_CATEGORIES.map((c) => `   - ${c.category}: ${c.aspects}`).join('\n')}
+${DESIGN_RULES}
+${isOverlay ? `   For a modal, compare the modal itself (its box, padding, content); ignore the page and backdrop behind it. Its issues'
+   "section" is "${screen.name} modal", with the area when useful (e.g. "${screen.name} modal · header").\n` : ''}   If the screen clearly is not the one in the design (an error page, a login page, a different step), fail every category with one issue saying what is shown instead.
+2. DESIGN DETAIL: the individual property comparisons behind step 1, mismatches first, at most 30 rows.
+3. RESPONSIVE: for each viewport in the images (${all.map((c) => c.viewport).join(', ')}) decide whether ${isOverlay ? 'the modal' : 'the layout'} is broken, using the scan and the screenshots
+   (overlapping or cut-off content, horizontal scrolling, unreadable text, cramped or squashed elements${isOverlay ? ', a modal wider than the screen or with content out of reach' : ', navigation that does not adapt'}).
+   Ignore scan items that are clearly intentional. Only report a problem you can see in the data or screenshots.
+
+Return this JSON shape:
+{
+${checklist.length ? `  "results": [ { "id": string, "item": string, "passed": boolean, "confidence": "high" | "medium" | "low", "evidence": string } ],
+` : ''}  "designChecklist": [
+    { "category": ${DESIGN_CATEGORIES.map((c) => JSON.stringify(c.category)).join(' | ')}, "passed": boolean,
+      "issues": [ { "section": string, "element": string, "selector": string | null, "issue": string, "source": "live" | "figma" } ] }
+  ],
+  "designMatch": {
+    "comparedAt": "${compare.viewport}",
+    "rows": [ { "section": string | null, "element": string, "selector": string | null, "property": string, "figma": string, "live": string, "match": boolean, "note": string | null } ]
+  },
+  "responsive": [ { "viewport": ${all.map((c) => JSON.stringify(c.viewport)).join(' | ')}, "width": number, "passed": boolean, "issues": string[] } ],
+  "summary": string
+}
+Include ${checklist.length ? 'every checklist id exactly once, ' : ''}every design category exactly once and every viewport above exactly once in "responsive".`,
+  };
+};
+
+/**
+ * Splits the Jira checklist across the interaction flow's screens, so each screen's tab lists (and its check judges)
+ * only its own items. Text only, small model.
+ * @param {object[]} p.items checklist items { id, item, category, verifyBy } — "live" (seen on a page as it loads) or
+ *   "playwright" (needed a click; now possibly provable by a flow screen the clicks reach)
+ * @param {object[]} p.screens { id, name, kind, path, texts } — path is how it is reached, texts its Figma copy
+ */
+export const flowAssignPrompt = ({ items, screens }) => ({
+  systemPrompt: `You sort the acceptance checklist of a Jira ticket by the screen of a web app each item is about. ${DATA_ONLY}`,
+  prompt: `SCREENS (S0 is where the page opens; the others are reached by the clicks in "path"; "texts" is copy from each screen's Figma design):
+${JSON.stringify(screens)}
+
+CHECKLIST:
+${JSON.stringify(items)}
+
+Put each checklist item on one screen:
+- A "live" item goes to the screen whose content, layout or copy it describes (use "texts" to tell them apart);
+  one about the whole ticket, or that fits no screen clearly, goes to "S0".
+- A "playwright" item goes to a screen other than S0 when looking at that screen after its clicks proves it:
+  "clicking X opens / shows Y" goes to screen Y when Y is reached by clicking X (or by the same kind of element), and
+  anything Y displays (text, images, icons, links, layout) goes to Y. Example: for a modal reached by clicking a team
+  card, "clicking a card shows a modal", "the modal shows the biography" and "the modal shows a LinkedIn icon" all go
+  to that modal. Only what a screenshot cannot show stays "tests": typing, hovering, submitting, animations or
+  transitions themselves, server responses, or no matching screen.
+
+Return this JSON shape:
+{ "assignments": [ { "id": string, "screen": string } ] }
+Include every checklist id exactly once; "screen" is one of ${screens.map((s) => JSON.stringify(s.id)).join(', ')} or "tests".`,
 });

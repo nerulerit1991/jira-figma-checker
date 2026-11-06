@@ -21,6 +21,52 @@ Jira and Figma **MCP extraction** (Jira MCP, Figma MCP, Desktop bridge) always r
 
 Claude runs are limited to the one MCP server needed and read-style tools. Codex runs use `codex exec`, enable only the requested MCP server, and run with a read-only workspace sandbox.
 
+## Interaction flow (pages and modals behind a click)
+
+Check UI compares one frame, but a ticket often covers more: *click Checkout → the Payment page*, *click a team
+member → their bio modal*. When the ticket's frame (Figma API tab) has prototype links, Check UI also checks the
+screens they lead to that the Jira ticket talks about. There is nothing to switch on: you only pick the starting frame.
+
+1. **Map (no tokens, no Figma API call).** When the frame is picked, the app follows the prototype links in the saved
+   Figma file from it: *On click / On tap → Navigate to* (a page), *Open overlay* and *Swap overlay* (a modal). Each
+   destination frame becomes a screen, with the clicks that lead to it, breadth first, up to 8 screens and 4 clicks
+   deep. Saved to `data/<KEY>/flow.json` and rebuilt by itself when the frame changes or Figma is re-fetched.
+   Component state changes (*Change to* a variant: hover, tabs, accordions) are not separate frames and are skipped.
+   The **Interaction flow** section in card 02 draws it as a chart: screen cards joined by arrows labelled with the
+   button clicked and what it opens, each marked green or red after a run.
+2. **Split the checklist.** At the start of each Check UI, one text-only AI call puts each Jira checklist item on the
+   screen it is about (using each screen's Figma copy and how it is reached), saved in `flow.json` and reused until
+   the checklist or the screens change. Items Check UI verifies always get a screen (unclear ones stay on the starting
+   screen). Items normally left to the Playwright tests because they need a click ("clicking a card shows a modal",
+   "the modal shows the biography") move to the screen the click reaches, since reaching and seeing it proves them;
+   hovering, typing, submitting and animations stay with the tests only. The main check then judges only the starting
+   screen's items. **Screens with no checklist items are not part of the ticket and are not checked** (faded in the
+   chart), so a homepage's many links cost nothing unless the ticket mentions them.
+3. **Click through, at desktop, tablet and mobile.** For each screen with checklist items and each viewport,
+   Playwright opens the page URL (signed in when **Requires login** is on), then clicks the same buttons by their
+   visible text in Figma (button, then link, then any text; for a card, its first text alone too). A page is captured
+   like Check UI; for a modal only the element with `role="dialog"` / `aria-modal` is captured, with boxes measured
+   from its corner like the Figma overlay frame. Each run starts from a fresh browser context, so one screen's clicks
+   never affect another. If the clicks cannot be repeated at a viewport (e.g. the button sits behind a mobile menu),
+   that viewport fails its responsive check with the reason.
+4. **Compare.** One AI call per screen judges its checklist items, the design checklist and compared properties
+   against its Figma frame (at the viewport closest to the frame's width; a modal uses the page it opens on), and a
+   responsive verdict for each viewport, from the screenshots and the automatic layout scan, as in Check UI. Results
+   go to `data/<KEY>/flow-check.json`, screenshots to `data/<KEY>/flow/<screen>-<viewport>.jpg`. **Check flow only**
+   re-runs just these screens.
+
+**Results by screen.** **Acceptance checklist**, **Figma vs live** and **Responsive layout** each get one tab per
+screen (1 = the ticket's frame, then each checked page or modal in click order), with that screen's score. The tabs
+together cover the whole ticket: the section totals and the ticket's score in the sidebar add them up.
+
+**Limits.** It needs the **Figma API** tab: only the whole file has the prototype links. It only knows clicks the
+designer wired in Figma's Prototype tab; a frame with none is checked on its own. Icon-only buttons have no text to
+find on the live page and are listed as not followed. A click that leaves the site (a hosted payment page, another
+domain) stops that screen before anything is captured there. A screen behind a click such as *Pay*, *Submit*,
+*Delete* or *Confirm* is skipped even when the ticket mentions it ("may change data"); its card has **Check it
+anyway** for a staging site with test data. A modal that scrolls inside itself is captured as far as the screen
+shows. Re-check N errors covers the starting screen only.
+
 ## Functional & API tests
 
 **Generate tests** (uses tokens once): the selected agent reads the saved Jira ticket plus a scan of the live page and writes ticket-specific Playwright scripts. Shared baseline cases in `data/global-test-cases/cases.json` are supplied as exclusions so they are not repeated in every ticket's scripts. **Run all tests** uses no tokens and runs both the saved ticket scripts and the shared global suite; global results are saved separately per ticket under `data/<KEY>/global-tests/`.
@@ -144,5 +190,7 @@ data/     One folder per ticket (git-ignored):
           data/<KEY>/figma.json    design data
           data/<KEY>/check.json    last UI check results
           data/<KEY>/check-errors.json  only what failed in the last check (used by Re-check)
+          data/<KEY>/flow.json      screens reached by clicking, from Figma's prototype links
+          data/<KEY>/flow-check.json  last interaction-flow results (screenshots in data/<KEY>/flow/)
           data/<KEY>/screenshot-{desktop,tablet,mobile}.jpg
 ```

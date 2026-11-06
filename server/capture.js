@@ -53,7 +53,12 @@ function summarizeDom() {
 }
 
 // Computed box model and typography of the key elements, for comparing with Figma specs.
-function collectStyles(maxY) {
+// `arg` is the page height to read up to, or { root } to read only inside that element (an open modal), with
+// boxes measured from the element's top-left like the Figma overlay frame.
+export function collectStyles(arg) {
+  const rootEl = typeof arg === 'object' && arg?.root ? document.querySelector(arg.root) : null;
+  const maxY = typeof arg === 'number' ? arg : Infinity;
+  const rootBox = rootEl?.getBoundingClientRect();
   const SELECTOR =
     'h1,h2,h3,h4,h5,h6,p,a,button,[role=button],input,select,textarea,label,img,nav,header,footer,section,article,form,li,[class*=card],[class*=btn],[class*=hero],[class*=container]';
   const px = (v) => (v === '0px' ? '0' : v);
@@ -92,7 +97,7 @@ function collectStyles(maxY) {
   // Every element with its own text (Webflow and similar builders put text in plain divs), plus the
   // structural elements above. Wrappers with no text and no visual style are skipped to save room.
   const out = [];
-  for (const el of document.body.querySelectorAll('*')) {
+  for (const el of (rootEl || document.body).querySelectorAll('*')) {
     if (out.length >= 400) break;
     if (/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|BR|svg|path|g)$/i.test(el.tagName)) continue;
     const ownText = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join(' ').trim();
@@ -105,7 +110,9 @@ function collectStyles(maxY) {
       section: sectionOf(el),
       el: selectorOf(el),
       text: (ownText || el.getAttribute('aria-label') || el.getAttribute('alt') || el.placeholder || '').replace(/\s+/g, ' ').slice(0, 60) || undefined,
-      box: `${Math.round(r.x)},${Math.round(r.y + window.scrollY)} ${Math.round(r.width)}x${Math.round(r.height)}`,
+      box: rootBox
+        ? `${Math.round(r.x - rootBox.x)},${Math.round(r.y - rootBox.y)} ${Math.round(r.width)}x${Math.round(r.height)}`
+        : `${Math.round(r.x)},${Math.round(r.y + window.scrollY)} ${Math.round(r.width)}x${Math.round(r.height)}`,
       padding: box(s, 'padding'),
       margin: box(s, 'margin'),
     };
@@ -127,7 +134,7 @@ function collectStyles(maxY) {
 }
 
 // Signals of a broken responsive layout at the current viewport width.
-function detectLayoutIssues() {
+export function detectLayoutIssues() {
   const vw = document.documentElement.clientWidth;
   const isMobile = vw < 600;
   // Screen-reader-only elements (sr-only / visually-hidden) are not part of the visual layout.
@@ -202,7 +209,7 @@ function detectLayoutIssues() {
 
 // Scrolls through the page so lazy images load and scroll-triggered (reveal) animations run,
 // then waits for images and returns to the top.
-async function preparePage() {
+export async function preparePage() {
   const step = Math.max(200, Math.round(window.innerHeight * 0.7));
   for (let y = 0, i = 0; y < document.documentElement.scrollHeight && i < 80; y += step, i++) {
     window.scrollTo(0, y);

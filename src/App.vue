@@ -13,11 +13,14 @@ import FigmaProjectDialog from './components/FigmaProjectDialog.vue';
 import FigmaSaveProjectDialog from './components/FigmaSaveProjectDialog.vue';
 import { parseFigmaUrl } from '../server/figma.js';
 import { itemsVerifiedBy, testStatusOf } from '../server/checklist.js';
+import { screenState, checkedScreens } from '../server/flowScope.js';
 import DesignMatch from './components/DesignMatch.vue';
 import DesignChecklist from './components/DesignChecklist.vue';
 import ResponsiveReport from './components/ResponsiveReport.vue';
 import TestsPanel from './components/TestsPanel.vue';
 import Improvements from './components/Improvements.vue';
+import FlowPanel from './components/FlowPanel.vue';
+import ScreenTabs from './components/ScreenTabs.vue';
 import TokenBurst from './components/TokenBurst.vue';
 import { statusClass } from './status.js';
 
@@ -53,6 +56,9 @@ const check = ref(null);
 const checkErrors = ref(null);
 // "What can be improved?" (improvements.json): advice beyond the AC; never part of a score.
 const improvements = ref(null);
+// Interaction flow: the screens Figma's prototype links lead to from the frame (flow.json), and their last check.
+const flow = ref(null);
+const flowCheck = ref(null);
 const tests = ref(null);
 const globalTests = ref({ cases: [], results: null });
 // The shared suite exists for every ticket, so Run is meaningful even before ticket tests are generated.
@@ -216,7 +222,7 @@ const isBusy = (action, key = selectedKey.value) => Boolean(jobs.value[`${key}:$
 const ticketBusy = (key) => Object.keys(jobs.value).some((id) => id.startsWith(`${key}:`));
 const anyBusy = computed(() => Object.keys(jobs.value).length > 0);
 // Check UI, tests and suggestions read the Details / Data section (links, sources, login), so it is locked while they run.
-const DATA_USERS = ['check', 'tests', 'run', 'improvements'];
+const DATA_USERS = ['check', 'flow', 'tests', 'run', 'improvements'];
 const dataLocked = computed(() => DATA_USERS.some((action) => isBusy(action)));
 const busyKeys = computed(() => [...new Set(Object.keys(jobs.value).map((id) => id.split(':')[0]))]);
 const error = ref('');
@@ -231,25 +237,77 @@ const figmaSaveDialog = ref(null);
 const liveItems = computed(() => itemsVerifiedBy(jira.value?.checklist, 'live'));
 const playwrightItems = computed(() => itemsVerifiedBy(jira.value?.checklist, 'playwright'));
 const notTestableItems = computed(() => itemsVerifiedBy(jira.value?.checklist, 'not-testable'));
+// ---- Screen tabs: screen S0 is the ticket's frame (check.json), S1… each page or modal reached by clicking
+// (flow-check.json) that the Jira checklist has items about. Each item belongs to one screen (flow.json
+// checklistScreens), so the tabs together cover the whole ticket. Screens the ticket does not mention get no tab.
+const tabScreens = computed(() => (flow.value?.screens || []).filter((s) => ['start', 'checked', 'risky'].includes(screenState(flow.value, s))));
+const flowTabsOn = computed(() => tabScreens.value.length > 1);
+const activeScreen = ref('S0');
+watch(selectedKey, () => { activeScreen.value = 'S0'; });
+watch(flowTabsOn, (on) => { if (!on) activeScreen.value = 'S0'; });
+const screenById = (id) => flow.value?.screens?.find((s) => s.id === id) || null;
+// A flow result belongs to a screen only while the screen still points at the same Figma frame.
+const flowResultOf = (id) => {
+  const s = screenById(id);
+  return (s && flowCheck.value?.screens?.find((r) => r.id === id && r.nodeId === s.nodeId)) || null;
+};
+const screenOfItem = (id) => (flowTabsOn.value && flow.value.checklistScreens?.assignments?.[id]) || 'S0';
+// Playwright items (they need a click) join a flow screen's tab when reaching that screen proves them.
+const flowPlaywrightItems = computed(() => playwrightItems.value.filter((i) => /^S[1-9]/.test(screenOfItem(i.id))));
+const tabItems = computed(() => [...liveItems.value, ...flowPlaywrightItems.value]);
+const itemsOfScreen = (id) => tabItems.value.filter((i) => screenOfItem(i.id) === id);
+// What the Checklist component reads for a screen: the main check for S0, the flow screen's results otherwise.
+const checkOfScreen = (id) => (id === 'S0' ? check.value : flowResultOf(id) && { results: flowResultOf(id).results || [] });
+const designOfScreen = (id) => (id === 'S0' ? check.value : flowResultOf(id));
+const tally = (list, ok) => (list?.length ? { passed: list.filter(ok).length, total: list.length } : null);
+const sum = (scores) => {
+  const parts = scores.filter((x) => x?.total);
+  return parts.length ? { passed: parts.reduce((n, x) => n + x.passed, 0), total: parts.reduce((n, x) => n + x.total, 0) } : null;
+};
+const checklistScoreOf = (id) => {
+  const results = new Map((checkOfScreen(id)?.results || []).map((r) => [r.id, r]));
+  const items = itemsOfScreen(id);
+  return items.length ? { passed: items.filter((i) => results.get(i.id)?.passed).length, total: items.length } : null;
+};
+const designScoreOf = (id) => {
+  const d = designOfScreen(id);
+  return d?.designChecklist?.length ? tally(d.designChecklist, (x) => x.passed) : tally(d?.designMatch?.rows, (x) => x.match);
+};
+const responsiveScoreOf = (id) => tally((id === 'S0' ? check.value : flowResultOf(id))?.responsive, (x) => x.passed);
+const screenIds = computed(() => (flowTabsOn.value ? tabScreens.value.map((s) => s.id) : ['S0']));
+const tabsFor = (scoreOf) =>
+  tabScreens.value.map((s) => ({
+    id: s.id,
+    label: s.name,
+    kind: s.kind,
+    off: screenState(flow.value, s) === 'risky',
+    score: scoreOf(s.id),
+  }));
+const shotOfScreen = (id) => (vp) =>
+  `/api/tickets/${encodeURIComponent(selectedKey.value)}/flow/screenshot/${id}/${vp}?t=${encodeURIComponent(flowCheck.value?.checkedAt || '')}`;
+// Why a flow screen's tab has no results: waiting to be allowed, not reached, or not checked yet.
+const screenNote = (id) => {
+  if (id === 'S0') return check.value ? '' : 'Not checked yet. Press play under Check UI.';
+  const s = screenById(id);
+  if (s && screenState(flow.value, s) === 'risky') return 'Skipped: a click on the way to this screen may change data on the site. Allow it under Interaction flow (staging with test data only).';
+  const r = flowResultOf(id);
+  if (!r) return 'Not checked yet. Press play under Check UI (or Check flow only).';
+  return r.error ? (r.reached ? r.error : `Could not reach this screen: ${r.error}`) : '';
+};
+
 const checklistScore = computed(() => {
-  const results = new Map((check.value?.results || []).map((r) => [r.id, r]));
-  return { passed: liveItems.value.filter((i) => results.get(i.id)?.passed).length, total: liveItems.value.length };
+  const scores = screenIds.value.map(checklistScoreOf);
+  return { passed: sum(scores)?.passed || 0, total: tabItems.value.length };
 });
 // Playwright items no generated test covers; Functionality lists them as gaps.
 const uncoveredItems = computed(() =>
   tests.value ? playwrightItems.value.filter((i) => testStatusOf(i.id, tests.value).status === 'no-test') : [],
 );
 // Older checks have only the property table; newer ones have the per-category design checklist.
-const designScore = computed(() => {
-  const cats = check.value?.designChecklist;
-  if (cats?.length) return { passed: cats.filter((x) => x.passed).length, total: cats.length };
-  const rows = check.value?.designMatch?.rows;
-  return rows?.length ? { passed: rows.filter((x) => x.match).length, total: rows.length } : null;
-});
-const responsiveScore = computed(() => {
-  const r = check.value?.responsive;
-  return r?.length ? { passed: r.filter((x) => x.passed).length, total: r.length } : null;
-});
+const designScore = computed(() => sum(screenIds.value.map(designScoreOf)));
+const responsiveScore = computed(() => sum(screenIds.value.map(responsiveScoreOf)));
+const hasDesignResults = computed(() => Boolean(check.value?.designChecklist?.length || check.value?.designMatch?.rows?.length || (flowTabsOn.value && designScore.value)));
+const hasResponsiveResults = computed(() => Boolean(check.value?.responsive?.length || (flowTabsOn.value && responsiveScore.value)));
 const testsScore = computed(() => {
   const r = tests.value?.results;
   return r && r.passed + r.failed ? { passed: r.passed, total: r.passed + r.failed } : null;
@@ -491,7 +549,7 @@ async function loadTicket(key) {
   const loadSequence = ++ticketLoadSequence;
   cancelAnimationFrame(scoreAnimationFrame);
   scoreProgress.value = 0;
-  ticket.value = jira.value = figma.value = check.value = checkErrors.value = improvements.value = tests.value = null;
+  ticket.value = jira.value = figma.value = check.value = checkErrors.value = improvements.value = tests.value = flow.value = flowCheck.value = null;
   ticketTokens.value = null;
   figmaSaved.value = null;
   applyLogin(null);
@@ -513,6 +571,8 @@ async function loadTicket(key) {
     check.value = data.check;
     checkErrors.value = data.checkErrors;
     improvements.value = data.improvements || null;
+    flow.value = data.flow || null;
+    flowCheck.value = data.flowCheck || null;
     tests.value = data.tests;
     globalTests.value = data.globalTests;
     ticketTokens.value = data.tokens || null;
@@ -550,7 +610,7 @@ async function run(action, request, apply) {
     if (selectedKey.value === key) apply?.(result);
     await loadTickets();
     // After an AI run, the agent's remaining allowance has changed.
-    if (['jira', 'figma', 'check', 'tests', 'improvements'].includes(action)) loadAgentUsage(true);
+    if (['jira', 'figma', 'check', 'flow', 'tests', 'improvements'].includes(action)) loadAgentUsage(true);
     return true;
   } catch (e) {
     if (FIELD_ERRORS.has(action)) fieldErrors.value = { ...fieldErrors.value, [id]: e.message };
@@ -559,9 +619,9 @@ async function run(action, request, apply) {
   } finally {
     const { [id]: _, ...rest } = jobs.value;
     jobs.value = rest;
-    if (['check', 'tests', 'run'].includes(action)) refreshLogin(key);
+    if (['check', 'flow', 'tests', 'run'].includes(action)) refreshLogin(key);
     // AI runs add to the ticket's token total, also when they fail after the agent answered.
-    if (['jira', 'figma', 'check', 'tests', 'improvements'].includes(action)) refreshTokens(key);
+    if (['jira', 'figma', 'check', 'flow', 'tests', 'improvements'].includes(action)) refreshTokens(key);
   }
 }
 
@@ -603,7 +663,7 @@ async function retrieveJira() {
   return run('jira', (key) => api.fetchJira(key, force, via, force), (res) => {
     jira.value = res.data;
     if (res.reset) {
-      tests.value = check.value = checkErrors.value = improvements.value = null;
+      tests.value = check.value = checkErrors.value = improvements.value = flowCheck.value = null;
       globalTests.value = { ...globalTests.value, results: null, errors: null };
     }
     if (!res.cached) showBurst('jira', res.data.ai);
@@ -676,6 +736,9 @@ async function retrieveFigma() {
   noteRun('figma', status.value?.runs && figmaRunLabel.value);
   return run('figma', (key) => api.fetchFigma(key, url, body), (res) => {
     figma.value = res.data;
+    // The API tab maps the new frame's prototype links straight away; other tabs have none to follow.
+    if ('flow' in res) flow.value = res.flow;
+    else if (via !== 'api') flow.value = null;
     if (via === 'api') figmaSaved.value = { fileKey: res.data.fileKey, project: res.data.fileName };
     // Remember the selected frame's link so the MCP and API tabs can use it too.
     if (via === 'bridge' && res.data.url && !figmaUrl.value) {
@@ -695,8 +758,9 @@ async function useSavedFigmaFrame() {
   if (!pick) return false;
   const frame = await frameSelectDialog.value.ask(selectedKey.value, pick.fileKey);
   if (!frame) return false;
-  return run('figma', async (key) => (await api.useFigmaFrame(key, frame.id, pick.fileKey)).data, (data) => {
+  return run('figma', (key) => api.useFigmaFrame(key, frame.id, pick.fileKey), ({ data, flow: map }) => {
     figma.value = data;
+    flow.value = map || null;
     figmaSaved.value = { fileKey: pick.fileKey, project: data.fileName };
     if (data.url && data.url !== figmaUrl.value) {
       figmaUrl.value = data.url;
@@ -714,12 +778,29 @@ async function checkUi() {
   // Picking the frame takes a while; never start the check on a ticket opened in the meantime.
   if (selectedKey.value !== key) return;
   noteRun('check', status.value?.runs && checkRunLabel.value);
-  return run('check', (key) => api.checkUi(key, url), (res) => {
+  const ok = await run('check', (key) => api.checkUi(key, url), (res) => {
     check.value = res.data;
     checkErrors.value = res.errors;
+    if (res.flow) flow.value = res.flow;
     showBurst('check', res.data.ai);
   });
+  // The same run continues into each page and modal the frame's prototype links open that the ticket talks about.
+  if (ok && selectedKey.value === key && checkedScreens(flow.value).length) await checkFlow();
 }
+
+// ---- Interaction flow ----
+const flowApiFrame = computed(() => figma.value?.via === 'api' && Boolean(figma.value?.nodeId));
+
+function checkFlow() {
+  const url = pageUrl.value;
+  return run('flow', (key) => api.checkFlow(key, url), ({ flow: map, ...res }) => {
+    flowCheck.value = res;
+    if (map) flow.value = map;
+    showBurst('check', res.ai);
+  });
+}
+// The one setting left: letting the flow click through to a screen behind a click that may change data.
+const allowRiskyScreen = (id, on) => run('flow-map', (key) => api.updateFlow(key, { allowRisky: { [id]: on } }), (res) => { flow.value = res; });
 
 // Re-checks only the last check's errors: fewer viewports, only the affected sections, far fewer tokens.
 // Checks with only failed design-table rows (no failed category) still have errors to re-check.
@@ -1174,8 +1255,8 @@ onMounted(async () => {
                 >
                   Re-check {{ checkErrorCount }} error{{ checkErrorCount === 1 ? '' : 's' }}
                 </button>
-                <button class="primary small" :disabled="!jira?.checklist?.length || !pageUrl || isBusy('check') || isBusy('jira') || isBusy('figma')" @click="checkUi" aria-label="Check UI">
-                  <span v-if="isBusy('check')" class="spinner" aria-hidden="true"></span>
+                <button class="primary small" :disabled="!jira?.checklist?.length || !pageUrl || isBusy('check') || isBusy('flow') || isBusy('jira') || isBusy('figma')" @click="checkUi" aria-label="Check UI">
+                  <span v-if="isBusy('check') || isBusy('flow')" class="spinner" aria-hidden="true"></span>
                   <svg v-else viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l10-6.5z" /></svg>
                 </button>
               </div>
@@ -1192,19 +1273,40 @@ onMounted(async () => {
               <p v-if="check?.warning" class="warn-text">{{ check.warning }}</p>
 
               <template v-if="jira?.checklist?.length">
+                <FlowPanel
+                  v-if="figmaHasSpecs"
+                  :flow="flow"
+                  :flow-check="flowCheck"
+                  :check="check"
+                  :api-frame="flowApiFrame"
+                  :busy="isBusy('flow')"
+                  :locked="isBusy('flow') || isBusy('flow-map') || isBusy('check') || isBusy('figma')"
+                  @allow="allowRiskyScreen"
+                  @run="checkFlow"
+                />
+
                 <details v-if="liveItems.length" class="accordion">
                   <summary>
                     <span class="acc-title">Acceptance checklist</span>
-                    <span v-if="check" class="score-chip" :class="scoreClass(checklistScore)">
+                    <span v-if="check || flowCheck" class="score-chip" :class="scoreClass(checklistScore)">
                       {{ checklistScore.passed }}/{{ checklistScore.total }}
                     </span>
                     <span v-else class="score-chip">{{ liveItems.length }} items</span>
                     <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
                   </summary>
-                  <Checklist :items="liveItems" :check="check" :show-score="false" />
+                  <template v-if="flowTabsOn">
+                    <ScreenTabs v-model="activeScreen" :tabs="tabsFor(checklistScoreOf)" />
+                    <div class="tab-panel">
+                      <p v-if="screenNote(activeScreen)" class="hint">{{ screenNote(activeScreen) }}</p>
+                      <Checklist v-if="itemsOfScreen(activeScreen).length" :items="itemsOfScreen(activeScreen)" :check="checkOfScreen(activeScreen)" :show-score="false" />
+                      <p v-else class="hint">No Jira checklist items are about this screen.</p>
+                      <p v-if="!flow.checklistScreens" class="acc-note">The checklist is split across the screens on the next check; until then every item is listed here.</p>
+                    </div>
+                  </template>
+                  <Checklist v-else :items="liveItems" :check="check" :show-score="false" />
                 </details>
 
-                <details v-if="check?.designChecklist?.length || check?.designMatch?.rows?.length" class="accordion">
+                <details v-if="hasDesignResults" class="accordion">
                   <summary>
                     <span class="acc-title">Figma vs live</span>
                     <span v-if="designScore" class="score-chip" :class="scoreClass(designScore)">
@@ -1212,34 +1314,64 @@ onMounted(async () => {
                     </span>
                     <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
                   </summary>
-                  <DesignChecklist v-if="check.designChecklist?.length" :items="check.designChecklist" />
-                  <details v-if="check.designMatch?.rows?.length" class="more">
-                    <summary>All compared properties</summary>
-                    <DesignMatch :match="check.designMatch" />
-                  </details>
-                  <p class="acc-note">
-                    If an issue persists after you fix it, re-fetch Figma: the design may have been updated since it was last retrieved.
-                  </p>
+                  <ScreenTabs v-if="flowTabsOn" v-model="activeScreen" :tabs="tabsFor(designScoreOf)" />
+                  <div class="tab-panel">
+                    <p v-if="flowTabsOn && screenNote(activeScreen)" class="hint">{{ screenNote(activeScreen) }}</p>
+                    <template v-if="designOfScreen(activeScreen)">
+                      <p v-if="activeScreen !== 'S0' && designOfScreen(activeScreen).designMatch?.comparedAt" class="meta">
+                        Compared at {{ designOfScreen(activeScreen).designMatch.comparedAt }} {{ designOfScreen(activeScreen).width }}px<template v-if="designOfScreen(activeScreen).landedUrl"> · {{ designOfScreen(activeScreen).landedUrl }}</template>
+                      </p>
+                      <DesignChecklist v-if="designOfScreen(activeScreen).designChecklist?.length" :items="designOfScreen(activeScreen).designChecklist" />
+                      <details v-if="designOfScreen(activeScreen).designMatch?.rows?.length" class="more">
+                        <summary>All compared properties</summary>
+                        <DesignMatch :match="designOfScreen(activeScreen).designMatch" />
+                      </details>
+                    </template>
+                    <p class="acc-note">
+                      If an issue persists after you fix it, re-fetch Figma: the design may have been updated since it was last retrieved.
+                    </p>
+                  </div>
                 </details>
                 <p v-else-if="check && !figma" class="hint block-hint">Retrieve the Figma design to compare padding, margins and fonts.</p>
 
-                <details v-if="check?.responsive?.length" class="accordion responsive-accordion">
+                <details v-if="hasResponsiveResults" class="accordion responsive-accordion">
                   <summary>
                     <span class="acc-title">Responsive layout</span>
                     <span v-if="responsiveScore" class="score-chip" :class="scoreClass(responsiveScore)">{{ responsiveScore.passed }}/{{ responsiveScore.total }}</span>
                     <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
                   </summary>
-                  <ResponsiveReport
-                    :responsive="check.responsive"
-                    :screenshots="check.screenshots"
-                    :ticket-key="selectedKey"
-                    :checked-at="check.checkedAt"
-                  />
+                  <ScreenTabs v-if="flowTabsOn" v-model="activeScreen" :tabs="tabsFor(responsiveScoreOf)" />
+                  <div class="tab-panel">
+                    <p v-if="flowTabsOn && screenNote(activeScreen)" class="hint">{{ screenNote(activeScreen) }}</p>
+                    <ResponsiveReport
+                      v-if="activeScreen === 'S0' && check?.responsive?.length"
+                      :responsive="check.responsive"
+                      :screenshots="check.screenshots"
+                      :ticket-key="selectedKey"
+                      :checked-at="check.checkedAt"
+                    />
+                    <ResponsiveReport
+                      v-else-if="activeScreen !== 'S0' && flowResultOf(activeScreen)?.responsive?.length"
+                      :responsive="flowResultOf(activeScreen).responsive"
+                      :screenshots="flowResultOf(activeScreen).screenshots || []"
+                      :ticket-key="selectedKey"
+                      :checked-at="flowCheck.checkedAt"
+                      :shot-url="shotOfScreen(activeScreen)"
+                    />
+                  </div>
                 </details>
 
-                <template v-if="check?.summary">
+                <template v-if="check?.summary || (flowTabsOn && flowCheck)">
                   <h3 class="block-title">Findings</h3>
-                  <ul class="list">
+                  <template v-if="flowTabsOn">
+                    <template v-for="(s, i) in flow.screens" :key="s.id">
+                      <p v-if="s.kind === 'start' ? check?.summary : flowResultOf(s.id)?.summary" class="findings-screen">{{ i + 1 }} · {{ s.name }}</p>
+                      <ul v-if="s.kind === 'start' ? check?.summary : flowResultOf(s.id)?.summary" class="list">
+                        <li v-for="(line, j) in (s.kind === 'start' ? check.summary : flowResultOf(s.id).summary).split(/(?<=[.;])\s+/).filter(Boolean)" :key="j">{{ line }}</li>
+                      </ul>
+                    </template>
+                  </template>
+                  <ul v-else class="list">
                     <li v-for="(line, i) in check.summary.split(/(?<=[.;])\s+/).filter(Boolean)" :key="i">{{ line }}</li>
                   </ul>
                 </template>

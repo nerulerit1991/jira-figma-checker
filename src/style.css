@@ -710,3 +710,68 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
 .imp-summary { margin: 14px 0 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--inset); font-size: 0.86rem; color: #d4d3de; }
 .imp-note { color: var(--muted); }
 .optional-tag { font-weight: 400; font-size: 0.8em; color: var(--subtle); }
+
+/* Interaction flow (Check UI): screens reached by clicking, from Figma's prototype links */
+.tag.risky { color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); }
+.flow-skipped { margin: 12px 0 0; padding-left: 18px; font-size: 0.78rem; color: var(--subtle); }
+
+/* Screen tabs inside the Check UI sections (interaction flow on) */
+.screen-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+.screen-tab {
+  display: inline-flex; align-items: center; gap: 8px; flex: none; max-width: 260px; height: 32px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); font-size: 0.8rem; cursor: pointer;
+}
+.screen-tab:hover { color: var(--text); border-color: var(--border-strong); }
+.screen-tab.active { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.screen-tab.off { opacity: 0.55; }
+.screen-tab .st-num { font-family: var(--mono); font-size: 0.7rem; color: var(--subtle); }
+.screen-tab.active .st-num { color: var(--text); }
+.screen-tab .st-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-panel > .hint:first-child { margin-top: 12px; }
+.tab-panel > .meta:first-child { margin-top: 12px; }
+.findings-screen { margin: 12px 0 6px; font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+.issue-element { font-weight: 600; color: inherit; }
+.issue-selector {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-family: var(--mono); font-size: 0.68rem;
+  color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); overflow-wrap: anywhere;
+}
+
+/* Interaction flow chart: screens as cards, clicks as labelled arrows (scrolls sideways inside the panel if wide) */
+.flow-chart { margin-top: 14px; overflow-x: auto; }
+.fn { display: flex; align-items: center; width: max-content; }
+.fn-card {
+  display: flex; flex-direction: column; gap: 4px; flex: none; width: 190px; padding: 10px 12px;
+  border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface);
+}
+.fn-card.start { border-color: var(--accent); }
+.fn-card.pass { border-color: rgba(74, 222, 128, 0.5); }
+.fn-card.fail { border-color: rgba(248, 113, 113, 0.55); }
+.fn-card.unreached { border-color: rgba(248, 113, 113, 0.55); border-style: dashed; }
+.fn-card.not-in-ticket, .fn-card.risky { opacity: 0.55; border-style: dashed; }
+.fn-card .fn-allow { align-self: flex-start; height: 24px; padding: 0 8px; font-size: 0.72rem; }
+.fn-card.risky .fn-allow { opacity: 1; }
+.fn-top { display: flex; align-items: center; gap: 6px; }
+.fn-top input[type=checkbox] { flex: none; width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--accent); }
+.fn-num { font-family: var(--mono); font-size: 0.7rem; color: var(--subtle); }
+.fn-dot { width: 8px; height: 8px; margin-left: auto; border-radius: 50%; }
+.fn-dot.pass { background: var(--green); }
+.fn-dot.fail { background: #ff4d5e; }
+.fn-dot.unreached { border: 1.5px dashed #ff4d5e; }
+.fn-name { font-size: 0.84rem; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.fn-meta { font-family: var(--mono); font-size: 0.68rem; color: var(--subtle); }
+.fn-card .tag.risky { align-self: flex-start; }
+.fn-children { display: flex; flex-direction: column; gap: 12px; }
+.fn-branch { display: flex; align-items: center; }
+.fn-edge { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; width: 170px; padding: 0 8px; }
+.fn-edge.faded { opacity: 0.45; }
+.flow-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.flow-foot .meta { margin: 0; flex: 1 1 240px; }
+.flow-skipped li.bad { color: #e8b9b9; }
+.fn-click, .fn-action { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 0.66rem; }
+.fn-click { color: var(--text); }
+.fn-action { color: var(--subtle); }
+.fn-line { position: relative; width: 100%; height: 0; border-top: 1.5px solid var(--border-strong); }
+.fn-line::after {
+  content: ''; position: absolute; right: -1px; top: -5.5px; width: 0; height: 0;
+  border-left: 8px solid var(--border-strong); border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+}

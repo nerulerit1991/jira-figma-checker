@@ -41,14 +41,15 @@ export async function writeJson(key, name, data) {
 
 /**
  * Fresh start for a ticket's results after its Jira ticket is retrieved again: removes the test scripts and every test
- * result (ticket and global), the Check UI results and screenshots, and the improvement suggestions. The ticket's
+ * result (ticket and global), the Check UI and interaction-flow results and screenshots, and the improvement suggestions. The ticket's
  * links, Figma data, sign-in settings and token log stay.
  */
 export async function resetTicketResults(key) {
   const dir = ticketDir(key);
-  const files = ['check.json', 'check-errors.json', 'improvements.json', 'screenshot-desktop.jpg', 'screenshot-tablet.jpg', 'screenshot-mobile.jpg'];
+  const files = ['check.json', 'check-errors.json', 'flow-check.json', 'improvements.json', 'screenshot-desktop.jpg', 'screenshot-tablet.jpg', 'screenshot-mobile.jpg'];
   await Promise.all([
     fs.rm(path.join(dir, 'tests'), { recursive: true, force: true }),
+    fs.rm(path.join(dir, 'flow'), { recursive: true, force: true }),
     ...files.map((name) => fs.rm(path.join(dir, name), { force: true })),
   ]);
 }
@@ -178,15 +179,28 @@ export async function listTickets() {
   const keys = await ticketKeys();
   const tickets = await Promise.all(
     keys.map(async (key) => {
-      const [ticket, jira, figma, check] = await Promise.all([
+      const [ticket, jira, figma, check, flow, flowCheck] = await Promise.all([
         getTicket(key),
         readJson(key, 'jira'),
         readJson(key, 'figma'),
         readJson(key, 'check'),
+        readJson(key, 'flow'),
+        readJson(key, 'flow-check'),
       ]);
       // Same score as the ticket's Checklist: only items the live check verifies (older checks judged them all).
+      // With the interaction flow on, items on its other screens (Playwright items too) come from flow-check.json.
+      const assigned = flow?.screens?.length > 1 ? flow.checklistScreens?.assignments || {} : {};
+      const onFlowScreen = (id) => /^S[1-9]/.test(assigned[id] || '');
       const live = new Set(itemsVerifiedBy(jira?.checklist, 'live').map((i) => i.id));
-      const results = (check?.results || []).filter((r) => !jira?.checklist || live.has(r.id));
+      const flowResults = (flowCheck?.screens || []).flatMap((s) => {
+        const screen = flow?.screens?.find((x) => x.id === s.id);
+        return screen?.nodeId === s.nodeId ? (s.results || []).filter((r) => assigned[r.id] === s.id) : [];
+      });
+      const flowItems = (jira?.checklist || []).filter((i) => onFlowScreen(i.id)).map((i) => i.id);
+      const results = [
+        ...(check?.results || []).filter((r) => (!jira?.checklist || live.has(r.id)) && !onFlowScreen(r.id)),
+        ...flowItems.map((id) => flowResults.find((r) => r.id === id) || { id, passed: false }),
+      ];
       return {
         key,
         summary: jira?.summary || null,
@@ -195,7 +209,7 @@ export async function listTickets() {
         hasFigma: Boolean(figma),
         passed: check ? results.filter((r) => r.passed).length : null,
         total: check ? results.length : null,
-        updatedAt: [ticket?.updatedAt, jira?.fetchedAt, figma?.fetchedAt, check?.checkedAt].filter(Boolean).sort().pop() || null,
+        updatedAt: [ticket?.updatedAt, jira?.fetchedAt, figma?.fetchedAt, check?.checkedAt, flowCheck?.checkedAt].filter(Boolean).sort().pop() || null,
       };
     }),
   );

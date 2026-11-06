@@ -7,6 +7,8 @@ const props = defineProps({
   screenshots: { type: Array, default: () => [] },
   ticketKey: { type: String, required: true },
   checkedAt: { type: String, required: true },
+  // Screenshot link per viewport; defaults to the main Check UI screenshots (the interaction flow passes its own).
+  shotUrl: { type: Function, default: null },
 });
 
 const ORDER = ['desktop', 'tablet', 'mobile'];
@@ -15,7 +17,7 @@ const cards = computed(() =>
     .sort((a, b) => ORDER.indexOf(a.viewport) - ORDER.indexOf(b.viewport))
     .map((r) => ({ ...r, hasShot: props.screenshots.some((s) => s.viewport === r.viewport) })),
 );
-const shot = (vp) => api.screenshotUrl(props.ticketKey, vp, props.checkedAt);
+const shot = (vp) => (props.shotUrl ? props.shotUrl(vp) : api.screenshotUrl(props.ticketKey, vp, props.checkedAt));
 </script>
 
 <template>
