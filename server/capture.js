@@ -1,12 +1,15 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-// Claude scales each image down to ~1568px on the long edge, so long pages are sent as several
-// tiles instead of one tall, unreadable image. maxTiles caps the token cost per viewport.
-export const VIEWPORTS = [
-  { name: 'desktop', width: 1440, height: 900, tileHeight: 1200, maxTiles: 6 },
-  { name: 'tablet', width: 768, height: 1024, tileHeight: 1400, maxTiles: 3 },
-  { name: 'mobile', width: 375, height: 812, tileHeight: 1600, maxTiles: 3 },
+import { VIEWPORTS } from './viewports.js';
+
+// The configured viewports (editable in the app); see viewports.js.
+export { VIEWPORTS };
+
+// The test-generation scan always looks at desktop and mobile, whatever the responsive check is set to.
+const TEST_SCAN_VIEWPORTS = [
+  { name: 'desktop', width: 1440, height: 900 },
+  { name: 'mobile', width: 375, height: 812 },
 ];
 
 // ---- The functions below run inside the browser page ----
@@ -230,7 +233,7 @@ export async function preparePage() {
 // ---- Node side ----
 
 /**
- * Renders the URL at desktop, tablet and mobile widths. Returns per-viewport screenshots,
+ * Renders the URL at each configured viewport (desktop, tablet and mobile by default). Returns per-viewport screenshots,
  * computed styles and layout issues, plus a DOM summary from the desktop render.
  * Screenshots are saved as screenshot-<viewport>.jpg in `dir`.
  * `desktopWidth` renders desktop at the Figma frame's width so positions compare 1:1.
@@ -259,8 +262,8 @@ export async function capturePage(url, dir, { desktopWidth, only, storageState }
         const vp = preset.name === 'desktop' && desktopWidth ? { ...preset, width: desktopWidth } : preset;
         const context = await browser.newContext({
           viewport: { width: vp.width, height: vp.height },
-          isMobile: vp.name === 'mobile',
-          hasTouch: vp.name !== 'desktop',
+          isMobile: vp.isMobile,
+          hasTouch: vp.hasTouch,
           storageState, // signed-in session when the ticket has a login (see login.js)
         });
         const page = await context.newPage();
@@ -411,7 +414,8 @@ export async function scanForTests(url, { storageState } = {}) {
   try {
     const scan = { url, network: [], consoleErrors: [], failedRequests: [], desktop: null, mobile: null };
     const seen = new Set();
-    for (const vp of [VIEWPORTS[0], VIEWPORTS[2]]) {
+    // Fixed sizes: functional tests do not depend on the responsive viewports people configure.
+    for (const vp of TEST_SCAN_VIEWPORTS) {
       const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, isMobile: vp.name === 'mobile', storageState });
       const page = await context.newPage();
       page.on('response', (res) => {

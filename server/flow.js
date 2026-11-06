@@ -153,7 +153,7 @@ export function viewportOfScreen(map, screen) {
   return preset.name === 'desktop' && width >= 1024 && width <= 2560 ? { ...preset, width } : { ...preset };
 }
 
-/** Every viewport a screen is captured at: desktop, tablet and mobile, with the compared one at its frame's width. */
+/** Every configured viewport a screen is captured at, with the compared one at its frame's width. */
 export function viewportsOfScreen(map, screen) {
   const compare = viewportOfScreen(map, screen);
   return VIEWPORTS.map((v) => (v.name === compare.name ? compare : { ...v }));
@@ -188,8 +188,8 @@ const DIALOG = '[role=dialog]:visible, [role=alertdialog]:visible, dialog[open],
 async function captureScreen(browser, { startUrl, screen, viewport, storageState, shotPath }) {
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
-    isMobile: viewport.name === 'mobile',
-    hasTouch: viewport.name !== 'desktop',
+    isMobile: viewport.isMobile,
+    hasTouch: viewport.hasTouch,
     storageState,
   });
   try {

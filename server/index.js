@@ -33,6 +33,7 @@ import { checkedScreens, screenState } from './flowScope.js';
 import { itemsVerifiedBy, verifyByOf } from './checklist.js';
 import { buildCheckErrors, viewportsFor, errorSections, inSections, mergeRecheck } from './checkErrors.js';
 import { capturePage, scanForTests, VIEWPORTS } from './capture.js';
+import { getViewports, setViewports, loadViewports, isViewportName } from './viewports.js';
 import { parseFigmaUrl, withScheme } from './figma.js';
 import { fixConnection, getJobs, signOutAll, browserStatus, cancelOtherAgentLogins } from './connections.js';
 import { verifyScript, readTests, readGlobalTests, generateTests, runTests, runGlobalTests, rerunFailedTests, sameSite } from './tests.js';
@@ -156,6 +157,16 @@ app.post('/api/settings/agent', async (req, res) => {
   res.json({ provider });
 });
 
+// Viewports the responsive check renders every page at (shared by all tickets; used from the next check on).
+app.get('/api/settings/viewports', (req, res) => {
+  res.json({ viewports: getViewports() });
+});
+
+app.put('/api/settings/viewports', async (req, res) => {
+  if (inFlight.size) throw httpError(409, 'A retrieve or check is still running. Change viewports when it finishes.');
+  res.json({ viewports: await setViewports(req.body?.viewports) });
+});
+
 // ---- One-click connection fixes ----
 
 app.post('/api/connections/:target/fix', async (req, res) => {
@@ -260,7 +271,7 @@ app.delete('/api/tickets', async (_req, res) => {
 
 app.get('/api/tickets/:key/screenshot/:viewport', async (req, res) => {
   const key = requireKey(req.params.key);
-  if (!VIEWPORTS.some((v) => v.name === req.params.viewport)) throw httpError(404, 'Unknown viewport.');
+  if (!isViewportName(req.params.viewport)) throw httpError(404, 'Unknown viewport.');
   res.sendFile(path.join(DATA_DIR, key, `screenshot-${req.params.viewport}.jpg`), (err) => err && res.status(404).end());
 });
 
@@ -719,7 +730,7 @@ app.get('/api/tickets/:key/flow/screenshot/:id/:viewport', async (req, res) => {
   const key = requireKey(req.params.key);
   const { id, viewport } = req.params;
   if (!/^S[1-9]\d?$/.test(id) || Number(id.slice(1)) > MAX_SCREENS) throw httpError(404, 'Unknown screen.');
-  if (!VIEWPORTS.some((v) => v.name === viewport)) throw httpError(404, 'Unknown viewport.');
+  if (!isViewportName(viewport)) throw httpError(404, 'Unknown viewport.');
   res.sendFile(flowShotPath(path.join(DATA_DIR, key), id, viewport), (err) => err && res.status(404).end());
 });
 
@@ -846,6 +857,7 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ error: err.message });
 });
 
+await loadViewports();
 app.listen(config.port, '127.0.0.1', () => {
   console.log(`API listening on http://127.0.0.1:${config.port}`);
 });

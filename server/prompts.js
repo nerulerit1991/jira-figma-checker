@@ -223,7 +223,7 @@ Do four things:
 ${DESIGN_CATEGORIES.map((c) => `   - ${c.category}: ${c.aspects}`).join('\n')}
 ${DESIGN_RULES}
 3. DESIGN DETAIL: the individual property comparisons behind step 2, mismatches first, at most 40 rows.
-4. RESPONSIVE: for desktop, tablet and mobile decide whether the layout is broken, using the scan and the screenshots
+4. RESPONSIVE: for each viewport (${page.viewports.map((v) => `${v.name} ${v.width}px`).join(', ')}) decide whether the layout is broken, using the scan and the screenshots
    (overlapping or cut-off content, horizontal scrolling, unreadable text, cramped or squashed elements, navigation that does not adapt).
    Ignore scan items that are clearly intentional. Only report a problem you can see in the data or screenshots.
 
@@ -238,7 +238,7 @@ Return this JSON shape:
     "comparedAt": "${compareViewport}",
     "rows": [ { "section": string | null, "element": string, "selector": string | null, "property": string, "figma": string, "live": string, "match": boolean, "note": string | null } ]
   } | null,
-  "responsive": [ { "viewport": "desktop" | "tablet" | "mobile", "width": number, "passed": boolean, "issues": string[] } ],
+  "responsive": [ { "viewport": ${page.viewports.map((v) => JSON.stringify(v.name)).join(' | ') || 'string'}, "width": number, "passed": boolean, "issues": string[] } ],
   "summary": string
 }
 Include every checklist id exactly once and every design category exactly once.`,
@@ -291,7 +291,7 @@ Return this JSON shape:
   "results": [ { "id": string, "passed": boolean, "confidence": "high" | "medium" | "low", "evidence": string } ],
   "designChecklist": [ { "category": string, "passed": boolean, "issues": [ { "section": string, "element": string, "selector": string | null, "issue": string, "source": "live" } ] } ],
   "designMatch": { "rows": [ { "section": string | null, "element": string, "property": string, "figma": string, "live": string, "match": boolean, "note": string | null } ] },
-  "responsive": [ { "viewport": "desktop" | "tablet" | "mobile", "width": number, "passed": boolean, "issues": string[] } ],
+  "responsive": [ { "viewport": ${page.viewports.map((v) => JSON.stringify(v.name)).join(' | ') || 'string'}, "width": number, "passed": boolean, "issues": string[] } ],
   "summary": string                // what is fixed and what is still wrong, one or two sentences
 }
 Include every previous checklist id, design category and responsive viewport exactly once, and one designMatch row

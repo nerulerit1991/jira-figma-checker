@@ -5,6 +5,15 @@ import { writeFileAtomic } from './store.js';
 
 const FILE = path.join(DATA_DIR, 'app-settings.json');
 
+export async function readAppSettings() {
+  return readSettings();
+}
+
+/** Merges `changes` into the saved app settings. */
+export async function updateAppSettings(changes) {
+  await writeSettings({ ...(await readSettings()), ...changes });
+}
+
 async function readSettings() {
   try {
     return JSON.parse(await fs.readFile(FILE, 'utf8'));

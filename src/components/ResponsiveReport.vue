@@ -11,10 +11,10 @@ const props = defineProps({
   shotUrl: { type: Function, default: null },
 });
 
-const ORDER = ['desktop', 'tablet', 'mobile'];
+// Widest first, matching the order viewports are configured and captured in.
 const cards = computed(() =>
   [...props.responsive]
-    .sort((a, b) => ORDER.indexOf(a.viewport) - ORDER.indexOf(b.viewport))
+    .sort((a, b) => (b.width || 0) - (a.width || 0))
     .map((r) => ({ ...r, hasShot: props.screenshots.some((s) => s.viewport === r.viewport) })),
 );
 const shot = (vp) => (props.shotUrl ? props.shotUrl(vp) : api.screenshotUrl(props.ticketKey, vp, props.checkedAt));

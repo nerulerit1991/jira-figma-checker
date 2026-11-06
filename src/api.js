@@ -14,6 +14,8 @@ const t = (key) => `/tickets/${encodeURIComponent(key)}`;
 export const api = {
   status: (refresh = false) => request(`/status${refresh ? '?refresh=1' : ''}`),
   agentUsage: (refresh = false) => request(`/agent-usage${refresh ? '?refresh=1' : ''}`),
+  viewports: () => request('/settings/viewports'),
+  setViewports: (viewports) => request('/settings/viewports', { method: 'PUT', body: { viewports } }),
   setAgent: (provider) => request('/settings/agent', { method: 'POST', body: { provider } }),
   fixConnection: (target) => request(`/connections/${target}/fix`, { method: 'POST' }),
   signOutAll: () => request('/connections/sign-out-all', { method: 'POST' }),

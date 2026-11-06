@@ -17,6 +17,7 @@ import { screenState, checkedScreens } from '../server/flowScope.js';
 import DesignMatch from './components/DesignMatch.vue';
 import DesignChecklist from './components/DesignChecklist.vue';
 import ResponsiveReport from './components/ResponsiveReport.vue';
+import ViewportSettings from './components/ViewportSettings.vue';
 import TestsPanel from './components/TestsPanel.vue';
 import Improvements from './components/Improvements.vue';
 import FlowPanel from './components/FlowPanel.vue';
@@ -967,8 +968,20 @@ async function resetAll() {
   });
 }
 
+// Viewports the responsive check renders at (app-wide setting, edited in the Responsive layout section).
+const viewports = ref([]);
+const viewportList = computed(() => viewports.value.map((v) => v.name).join(', ') || 'desktop, tablet and mobile');
+async function loadViewports() {
+  try {
+    viewports.value = (await api.viewports()).viewports;
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
 onMounted(async () => {
   loadStatus();
+  loadViewports();
   loadAgentUsage();
   try {
     await loadTickets();
@@ -1271,7 +1284,7 @@ onMounted(async () => {
               </p>
               <p v-if="!jira" class="hint">Retrieve the Jira ticket first to build the checklist.</p>
               <p v-else-if="!pageUrl" class="hint">Enter the live page URL under Details / Data to enable play.</p>
-              <p v-else-if="isBusy('check')" class="hint">Rendering at desktop, tablet and mobile, then comparing with Jira and Figma…</p>
+              <p v-else-if="isBusy('check')" class="hint">Rendering at {{ viewportList }}, then comparing with Jira and Figma…</p>
               <p v-if="check?.warning" class="warn-text">{{ check.warning }}</p>
 
               <template v-if="jira?.checklist?.length">
@@ -1336,14 +1349,22 @@ onMounted(async () => {
                 </details>
                 <p v-else-if="check && !figma" class="hint block-hint">Retrieve the Figma design to compare padding, margins and fonts.</p>
 
-                <details v-if="hasResponsiveResults" class="accordion responsive-accordion">
+                <details class="accordion responsive-accordion">
                   <summary>
                     <span class="acc-title">Responsive layout</span>
                     <span v-if="responsiveScore" class="score-chip" :class="scoreClass(responsiveScore)">{{ responsiveScore.passed }}/{{ responsiveScore.total }}</span>
+                    <span v-else-if="viewports.length" class="score-chip">{{ viewports.length }} viewport{{ viewports.length === 1 ? '' : 's' }}</span>
                     <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
                   </summary>
-                  <ScreenTabs v-if="flowTabsOn" v-model="activeScreen" :tabs="tabsFor(responsiveScoreOf)" />
-                  <div class="tab-panel">
+                  <ViewportSettings
+                    v-if="viewports.length"
+                    :viewports="viewports"
+                    :locked="isBusy('check') || isBusy('flow')"
+                    @change="viewports = $event"
+                  />
+                  <p v-if="!hasResponsiveResults" class="hint">Run Check UI to see the layout at each viewport.</p>
+                  <ScreenTabs v-if="hasResponsiveResults && flowTabsOn" v-model="activeScreen" :tabs="tabsFor(responsiveScoreOf)" />
+                  <div v-if="hasResponsiveResults" class="tab-panel">
                     <p v-if="flowTabsOn && screenNote(activeScreen)" class="hint">{{ screenNote(activeScreen) }}</p>
                     <ResponsiveReport
                       v-if="activeScreen === 'S0' && check?.responsive?.length"
