@@ -627,9 +627,10 @@ async function run(action, request, apply) {
 
 // Where Jira is read from, remembered per ticket: "mcp" (selected agent's local Atlassian MCP)
 // or "api" (Jira REST API with JIRA_EMAIL + JIRA_API_TOKEN; only the checklist step uses AI).
+// The API sources come first: they read Jira and Figma without AI tokens (the card title says they are recommended).
 const JIRA_TABS = [
-  { via: 'mcp', label: 'Jira MCP' },
   { via: 'api', label: 'Jira API' },
+  { via: 'mcp', label: 'Jira MCP' },
 ];
 const jiraVia = ref('mcp');
 watch(
@@ -675,9 +676,9 @@ async function retrieveJira() {
 // "mcp" (selected agent's local Figma MCP), "bridge" (the frame selected in the Figma desktop app)
 // or "api" (Figma REST API; the whole file is saved in data/full-figma/, into the project folder chosen at retrieve).
 const FIGMA_TABS = [
+  { via: 'api', label: 'Figma API' },
   { via: 'mcp', label: 'Figma MCP online' },
   { via: 'bridge', label: 'Figma MCP bridge' },
-  { via: 'api', label: 'Figma API' },
 ];
 const figmaVia = ref('api');
 watch(
@@ -1072,6 +1073,7 @@ onMounted(async () => {
               <div class="card-head">
                 <span class="step">01</span>
                 <h2>Details / Data</h2>
+                <span class="card-note">Jira API and Figma API are recommended</span>
                 <span v-if="clickedRuns.jira || clickedRuns.figma" class="run-chips">
                   <span v-for="chip in clickedRuns.jira" :key="chip" class="run-chip" :title="chip" :class="{ busy: isBusy('jira') }">{{ chip }}</span>
                   <span v-for="chip in clickedRuns.figma" :key="chip" class="run-chip" :title="chip" :class="{ busy: isBusy('figma') }">{{ chip }}</span>

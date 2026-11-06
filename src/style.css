@@ -664,7 +664,8 @@ li.skip .item { color: var(--muted); }
 .check-target { margin-left: auto; font-family: var(--mono); font-size: 0.74rem; color: var(--subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 /* Figma source as radio buttons (same green as the primary buttons) */
-.via-radios { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 10px; min-height: 28px; align-items: center; }
+/* Lines start at the top, so the radios stay put whether or not the token hint wraps onto a second line. */
+.via-radios { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 10px; min-height: 28px; align-items: center; align-content: flex-start; }
 .via-radio { display: inline-flex; min-width: 0; align-items: center; gap: 6px; font-size: 0.76rem; color: var(--subtle); cursor: pointer; white-space: nowrap; }
 .via-radio.on, .via-radio:hover { color: var(--text); }
 .via-radio input {
@@ -775,3 +776,6 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
   content: ''; position: absolute; right: -1px; top: -5.5px; width: 0; height: 0;
   border-left: 8px solid var(--border-strong); border-top: 5px solid transparent; border-bottom: 5px solid transparent;
 }
+
+/* Note beside a card title, e.g. "Jira API and Figma API are recommended" on Details / Data. */
+.card-note { min-width: 0; font-size: 0.76rem; color: var(--subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
