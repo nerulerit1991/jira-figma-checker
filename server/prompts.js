@@ -18,6 +18,14 @@ const NAVIGATION_RULE =
   'it; no href at all (a script-driven button) stays not passed with confidence "low"';
 
 /** Shared checklist generator for both Jira retrieval methods. */
+// The Jira ticket, never Figma, decides whether there is an interaction flow: designs run ahead of the sprint and
+// link to many screens a ticket never mentions. Figma only maps a flow the ticket asks for.
+const FLOW_NEED_RULE = `- "flow.needed": true only when an acceptance criterion requires going from this page to another page, modal, drawer
+  or overlay by a click and checking what appears there (e.g. "clicking a team card opens the biography modal",
+  "Apply now leads to the application form"). Displaying content (a logo, a navigation list, fields, a table), link
+  targets (href) alone, and actions that stay on the same screen (typing, filtering, validation) do NOT need a flow.
+  Figma prototype links do not count; judge from the ticket only. "reason": one plain sentence.`;
+
 export const jiraChecklistPrompt = (issue) => ({
   systemPrompt: `You turn Jira ticket acceptance criteria into a precise UI QA checklist. You have no tools; use only the ticket given. ${DATA_ONLY}`,
   prompt: `Jira ticket ${issue.key}: "${issue.summary}"
@@ -34,7 +42,8 @@ Return this JSON shape:
   "checklist": [                     // checks derived only from those acceptance criteria
     { "id": "C1", "item": string, "category": "content" | "layout" | "style" | "behavior" | "other", "source": "acceptance-criteria" | "description",
       "verifyBy": "live" | "playwright" | "not-testable", "reason": string | null }
-  ]
+  ],
+  "flow": { "needed": boolean, "reason": string }   // does the ticket ask for moving to ANOTHER page or modal? (rule below)
 }
 Rules:
 - Use the acceptance criteria field as the checklist source whenever it is present. The description is context only in that case.
@@ -63,8 +72,24 @@ Rules:
   5. "live": everything else, provable from the page as it loads, from screenshots and the DOM: text, headings, images,
      labels, placeholders, required markers, buttons and links visible on load, link targets (href), layout or style.
   "reason": for "not-testable", one short sentence on why and what manual QA needs; otherwise null.
+${FLOW_NEED_RULE}
 - Set source to "acceptance-criteria" when based on the acceptance criteria field and "description" when the field is empty and the description is used.
 - Return the same criteria and checklist for the same ticket content regardless of which Jira retrieval method supplied it.`,
+});
+
+/** Only the flow decision, for tickets whose checklist was made before the decision existed (keeps their checklist). */
+export const flowNeedPrompt = (issue) => ({
+  systemPrompt: `You read a Jira ticket and decide whether its acceptance criteria ask for an interaction flow. You have no tools. ${DATA_ONLY}`,
+  prompt: `Jira ticket ${issue.key}: "${issue.summary}"
+
+ACCEPTANCE CRITERIA:
+${(issue.acceptanceCriteria || []).join('\n').slice(0, 8000) || '(empty)'}
+
+DESCRIPTION (context only when acceptance criteria are present):
+${issue.description?.slice(0, 8000) || '(empty)'}
+
+Return this JSON shape: { "flow": { "needed": boolean, "reason": string } }
+${FLOW_NEED_RULE}`,
 });
 
 export const jiraPrompt = (jiraUrl, key, server) => ({
@@ -376,6 +401,26 @@ RULES for the code:
      Use test.skip(true, 'Cannot create its own Playwright-Test record: <reason>') instead.
   The same applies to api.spec.js: send POST/PUT/PATCH/DELETE only for a Playwright-Test- record the test created, and
   delete it afterwards; otherwise skip that call with a reason.
+- EMPTY TABLE / LIST STATE: default case G08 already checks that any table shows a generic no-data message. Only when a
+  CHECKLIST ITEM above names a table's empty state (its exact message, icon or behaviour), write that item's test this way,
+  titled "[<checklist id>] <section>: <table> shows its no-data state when there are no records".
+  Never delete or change real data to empty it; mock the response instead, which never reaches the server:
+  1. Pick the GET call in the scan's "network" that loads the table's rows (its "shape" shows the JSON structure).
+  2. Register the mock BEFORE page.goto, matching that path only and only GET; everything else passes on unchanged:
+       let mocked = false;
+       await page.route('**/api/users*', async (route) => {
+         if (route.request().method() !== 'GET') return route.continue();
+         mocked = true;
+         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: [], total: 0 }) });
+       });
+     Build the body from the call's "shape": same keys, every array that holds the rows set to [], counts/totals set to 0,
+     other values kept as plausible fakes of their type. route.continue() and route.fallback() take NO arguments, and
+     route.fetch is not allowed (the script is rejected otherwise). Never mock POST/PUT/PATCH/DELETE.
+  3. After page.goto, assert expect(mocked, 'The table data request was replaced with an empty list').toBe(true), wait
+     for any loading spinner or skeleton to go away, then assert the empty-state message (use the ticket's or Figma's
+     wording when given, otherwise a flexible text match such as /no (data|records|results)/i) and that no data rows show.
+  4. If no GET JSON call in the scan plausibly loads the table (e.g. rows are in the server-rendered HTML), write the
+     test with test.skip(true, 'Table rows are not loaded by an API call; needs an empty test account or seed data').
 - Each ticket-specific behavior test title starts with the checklist id(s) it covers in brackets, then names the exact
   element it acts on and checks: the page section it is in (as labelled on the page) and the element by its visible text,
   role or class from the scan, e.g. "[C12] Pricing plans: each plan card (.plan-card) shows its
@@ -540,9 +585,11 @@ Include ${checklist.length ? 'every checklist id exactly once, ' : ''}every desi
  *   "playwright" (needed a click; now possibly provable by a flow screen the clicks reach)
  * @param {object[]} p.screens { id, name, kind, path, texts } — path is how it is reached, texts its Figma copy
  */
-export const flowAssignPrompt = ({ items, screens }) => ({
+export const flowAssignPrompt = ({ items, screens, ticket = {} }) => ({
   systemPrompt: `You sort the acceptance checklist of a Jira ticket by the screen of a web app each item is about. ${DATA_ONLY}`,
-  prompt: `SCREENS (S0 is where the page opens; the others are reached by the clicks in "path"; "texts" is copy from each screen's Figma design):
+  prompt: `TICKET: ${JSON.stringify({ key: ticket.key, summary: ticket.summary })}
+
+SCREENS (S0 is where the page opens; the others are reached by the clicks in "path"; "texts" is copy from each screen's Figma design):
 ${JSON.stringify(screens)}
 
 CHECKLIST:
@@ -558,7 +605,13 @@ Put each checklist item on one screen:
   to that modal. Only what a screenshot cannot show stays "tests": typing, hovering, submitting, animations or
   transitions themselves, server responses, or no matching screen.
 
+A Figma prototype link alone does not make a screen part of the ticket: a screen other than S0 gets items only when
+the checklist really talks about it. Also judge S0 itself: does its design (name and "texts") look like the page this
+ticket and checklist describe? A different page or product (e.g. an "About us" marketing page for a ticket about a
+policy list or navigation settings) does not match.
+
 Return this JSON shape:
-{ "assignments": [ { "id": string, "screen": string } ] }
+{ "assignments": [ { "id": string, "screen": string } ],
+  "start": { "matchesTicket": boolean, "reason": string } }   // reason: one plain sentence, e.g. "S0 is an About us page; the ticket is about the navigation menu settings"
 Include every checklist id exactly once; "screen" is one of ${screens.map((s) => JSON.stringify(s.id)).join(', ')} or "tests".`,
 });

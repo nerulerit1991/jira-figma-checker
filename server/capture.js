@@ -12,6 +12,18 @@ const TEST_SCAN_VIEWPORTS = [
   { name: 'mobile', width: 375, height: 812 },
 ];
 
+/**
+ * The structure of a JSON body with every value replaced by its type, e.g. { data: [{ id: 'number' }], total: 'number' }.
+ * Arrays keep one element's shape. No real values are kept, so record data never reaches the AI prompt.
+ */
+export function jsonShape(value, depth = 0) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return value.length ? [jsonShape(value[0], depth + 1)] : [];
+  if (typeof value !== 'object') return typeof value;
+  if (depth >= 4) return 'object';
+  return Object.fromEntries(Object.keys(value).slice(0, 30).map((k) => [k, jsonShape(value[k], depth + 1)]));
+}
+
 // ---- The functions below run inside the browser page ----
 
 // A compact summary of what is on the page.
@@ -414,6 +426,7 @@ export async function scanForTests(url, { storageState } = {}) {
   try {
     const scan = { url, network: [], consoleErrors: [], failedRequests: [], desktop: null, mobile: null };
     const seen = new Set();
+    const pendingShapes = [];
     // Fixed sizes: functional tests do not depend on the responsive viewports people configure.
     for (const vp of TEST_SCAN_VIEWPORTS) {
       const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, isMobile: vp.name === 'mobile', storageState });
@@ -425,7 +438,12 @@ export async function scanForTests(url, { storageState } = {}) {
           const key = `${req.method()} ${res.url().split('?')[0]}`;
           if (!seen.has(key) && scan.network.length < 60) {
             seen.add(key);
-            scan.network.push({ method: req.method(), url: res.url().slice(0, 300), status: res.status(), type, contentType: res.headers()['content-type']?.split(';')[0] });
+            const entry = { method: req.method(), url: res.url().slice(0, 300), status: res.status(), type, contentType: res.headers()['content-type']?.split(';')[0] };
+            scan.network.push(entry);
+            // Structure only (keys and value types), so tests can mock an empty response of the same shape without real data reaching the AI.
+            if (type !== 'document' && entry.contentType?.includes('json') && res.ok()) {
+              pendingShapes.push(res.json().then((body) => { entry.shape = jsonShape(body); }).catch(() => {}));
+            }
           }
         }
         if (res.status() >= 400 && scan.failedRequests.length < 20) scan.failedRequests.push({ url: res.url().slice(0, 300), status: res.status(), viewport: vp.name });
@@ -449,6 +467,7 @@ export async function scanForTests(url, { storageState } = {}) {
       }
       await page.evaluate(preparePage);
       scan[vp.name] = { width: vp.width, title: await page.title(), elements: await page.evaluate(listInteractive), headings: await page.evaluate(listHeadings), outline: await page.evaluate(outlineSections) };
+      await Promise.allSettled(pendingShapes);
       await context.close();
     }
     return scan;

@@ -68,7 +68,7 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
 
     <details class="accordion suite-accordion">
         <summary>
-          <span class="acc-title">Global test cases</span>
+          <span class="acc-title">Default test cases</span>
           <span v-if="globalTests.results" class="score-chip" :class="globalTests.results.failed ? 'bad' : 'good'">{{ globalTests.results.passed }}/{{ globalCases.length }}</span>
           <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
         </summary>

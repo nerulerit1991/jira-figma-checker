@@ -656,7 +656,7 @@ async function retrieveJira() {
   if (force) {
     const ok = await confirmDialog.value.ask({
       title: 'Retrieve the Jira ticket again?',
-      message: 'This resets the ticket: the checklist is rebuilt, and all tests (ticket and global), test results, Check UI results and suggestions are removed. Figma data and links are kept. Creating the checklist uses AI tokens.',
+      message: 'This resets the ticket: the checklist is rebuilt, and all tests (ticket and default), test results, Check UI results and suggestions are removed. Figma data and links are kept. Creating the checklist uses AI tokens.',
       confirmLabel: 'Reset and retrieve',
     });
     if (!ok || selectedKey.value !== key) return;
@@ -665,6 +665,7 @@ async function retrieveJira() {
   noteRun('jira', status.value?.runs && jiraRunLabel.value);
   return run('jira', (key) => api.fetchJira(key, force, via, force), (res) => {
     jira.value = res.data;
+    if (res.flow) flow.value = res.flow;
     if (res.reset) {
       tests.value = check.value = checkErrors.value = improvements.value = flowCheck.value = null;
       globalTests.value = { ...globalTests.value, results: null, errors: null };
@@ -826,7 +827,7 @@ async function generateTests() {
     if (tests.value) {
       const ok = await confirmDialog.value.ask({
         title: 'Regenerate tests?',
-        message: 'Claude rewrites the ticket-specific scripts from the ticket and current page. Global test cases are kept separate. This uses tokens again and replaces the saved ticket scripts and last results.',
+        message: 'Claude rewrites the ticket-specific scripts from the ticket and current page. Default test cases are kept separate. This uses tokens again and replaces the saved ticket scripts and last results.',
         confirmLabel: 'Regenerate',
         danger: false,
       });
@@ -905,7 +906,7 @@ async function verifyScript({ file, hash, verified }) {
   }
 }
 
-// Re-runs only the tests that failed last time (ticket and global); passing results are kept.
+// Re-runs only the tests that failed last time (ticket and default); passing results are kept.
 const failedTestCount = computed(() => (tests.value?.results?.failed || 0) + (globalTests.value?.results?.failed || 0));
 function rerunFailedTests() {
   if (isBusy('run') || !failedTestCount.value) return;
@@ -1399,6 +1400,7 @@ onMounted(async () => {
                 <FlowPanel
                   v-if="figmaHasSpecs"
                   :flow="flow"
+                  :flow-need="jira?.flow || null"
                   :flow-check="flowCheck"
                   :check="check"
                   :api-frame="flowApiFrame"

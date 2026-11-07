@@ -94,3 +94,67 @@ test('[G07] async form actions do not submit twice on a rapid double click', asy
   await page.waitForTimeout(400);
   expect(submissions, 'rapid repeat clicks should not send duplicate writes').toBeLessThanOrEqual(1);
 });
+
+// Empties only the list response that fills the table, in the browser only (route.fulfill): the server and its data are
+// never touched. Every other request (permissions, filters, and any write) passes on unchanged, as on a normal load.
+const emptyLists = (value) => {
+  if (Array.isArray(value)) return [];
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([k, v]) =>
+    [k, typeof v === 'number' && /^(total|count|total_?count|total_?items|total_?records|records_?total|records_?filtered)$/i.test(k) ? 0 : emptyLists(v)]));
+};
+
+/** Lengths of every array of records (objects) inside a JSON body. */
+const recordListLengths = (value, out = []) => {
+  if (Array.isArray(value)) {
+    if (value.length && value.every((v) => v && typeof v === 'object' && !Array.isArray(v))) out.push(value.length);
+    value.forEach((v) => recordListLengths(v, out));
+  } else if (value && typeof value === 'object') Object.values(value).forEach((v) => recordListLengths(v, out));
+  return out;
+};
+
+test('[G08] tables show a no-data state when their list is empty', async ({ page, baseURL }) => {
+  const tables = 'table:visible, [role="table"]:visible, [role="grid"]:visible';
+  // Same site, not just same origin: APIs often live on a sibling subdomain (app.example.com -> api.example.com).
+  const site = (url) => new URL(url).hostname.split('.').slice(-2).join('.');
+  const pathOf = (url) => new URL(url).origin + new URL(url).pathname;
+  const isDataGet = (request, pageUrl) => ['fetch', 'xhr'].includes(request.resourceType()) && request.method() === 'GET' && site(request.url()) === site(pageUrl);
+
+  const lists = new Map(); // request path -> record-list lengths in its JSON body
+  const reading = [];
+  page.on('response', (response) => {
+    if (!isDataGet(response.request(), baseURL) || !(response.headers()['content-type'] || '').includes('json')) return;
+    reading.push(response.json().then((body) => lists.set(pathOf(response.url()), recordListLengths(body))).catch(() => {}));
+  });
+  await page.goto(baseURL);
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await Promise.allSettled(reading);
+  test.skip(!(await page.locator(tables).count()), 'No table on this page');
+  const emptyMessage = page.getByText(/no\s+(data|records?|results?|items?|entries|rows?|matching|available)|no\s+\w+\s+(found|available|yet)|nothing\s+to\s+(show|display)/i).locator('visible=true');
+  const messagesBefore = await emptyMessage.count();
+
+  // The table's list: a response holding exactly as many records as the table shows rows (else the largest list).
+  const rows = await page.locator(tables).first().locator('tr:has(td), [role="row"]:has([role="cell"], [role="gridcell"])').count();
+  const entries = [...lists].filter(([, lengths]) => lengths.length);
+  const exact = entries.filter(([, lengths]) => lengths.includes(rows));
+  const target = (exact.length ? exact : entries.sort((a, b) => Math.max(...b[1]) - Math.max(...a[1])).slice(0, 1)).map(([p]) => p);
+  test.skip(!target.length, 'The table rows are not loaded by an API request (e.g. rendered on the server)');
+
+  let mocked = 0;
+  await page.route('**/*', async (route) => {
+    const request = route.request();
+    if (!isDataGet(request, baseURL) || !target.includes(pathOf(request.url()))) return route.continue();
+    const response = await route.fetch();
+    const body = await response.json().catch(() => undefined);
+    if (body === undefined) return route.fulfill({ response });
+    mocked++;
+    await route.fulfill({ response, json: emptyLists(body) });
+  });
+  await page.reload();
+  await page.waitForLoadState('networkidle').catch(() => {});
+  expect(mocked, 'The table data request was replaced with an empty list').toBeGreaterThan(0);
+
+  await expect
+    .poll(() => emptyMessage.count(), { message: 'An empty table shows a message such as "No data" instead of blank space', timeout: 10000 })
+    .toBeGreaterThan(messagesBefore);
+});
