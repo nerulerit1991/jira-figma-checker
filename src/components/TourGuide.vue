@@ -60,6 +60,7 @@ function ease(now) {
 // intro: a first element shown on its own for a moment, then the highlight glides to the step's target by itself.
 const intro = ref(false);
 const INTRO_MS = 1600;
+const INTRO_AFTER_ACT_MS = 800;
 const step = computed(() => {
   const s = STEPS[index.value];
   return intro.value && s.intro ? { ...s, ...s.intro, next: null } : s;
@@ -114,8 +115,11 @@ async function show(i) {
     const node = el(STEPS[i].intro);
     if (!inView(node)) node.scrollIntoView({ block: 'center', behavior: 'instant' });
     measure();
-    // The intro can act too (e.g. type the Figma link); it lasts until both that and INTRO_MS are done.
-    await Promise.all([new Promise((r) => setTimeout(r, INTRO_MS)), STEPS[i].intro.enter?.(props.tour)?.catch?.(() => {})]);
+    // The intro can act too (e.g. type the Figma link). After the action, hold a shorter beat (the typing
+    // already kept it on screen); a plain intro holds the full INTRO_MS.
+    const act = STEPS[i].intro.enter;
+    await act?.(props.tour)?.catch?.(() => {});
+    await new Promise((r) => setTimeout(r, act ? INTRO_AFTER_ACT_MS : INTRO_MS));
     intro.value = busy.value = false;
     if (!open.value) return;
   }
