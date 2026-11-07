@@ -737,11 +737,14 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
   color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); overflow-wrap: anywhere;
 }
 
-/* Interaction flow chart: screens as cards, clicks as labelled arrows (scrolls sideways inside the panel if wide) */
-.flow-chart { margin-top: 14px; overflow-x: auto; }
-.fn { display: flex; align-items: center; width: max-content; }
+/* Interaction flow chart: screens as cards, clicks as labelled arrows (scrolls sideways inside the panel if wide).
+   Laid out as a tree that reads left to right, top to bottom: a screen sits on the same row as its first child, so a
+   chain of clicks is one straight row; its other children hang below, joined by a vertical trunk. Every arrow sits at
+   --fn-mid, the middle of a standard card. FlowPanel orders siblings shortest branch first. */
+.flow-chart { --fn-h: 86px; --fn-mid: calc(var(--fn-h) / 2); --fn-gap: 14px; margin-top: 14px; overflow-x: auto; padding-bottom: 6px; }
+.fn { display: flex; align-items: flex-start; width: max-content; }
 .fn-card {
-  display: flex; flex-direction: column; gap: 4px; flex: none; width: 190px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 4px; flex: none; width: 190px; min-height: var(--fn-h); padding: 10px 12px; box-sizing: border-box;
   border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface);
 }
 .fn-card.not-in-ticket, .fn-card.risky { opacity: 0.55; border-style: dashed; }
@@ -753,9 +756,17 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
 .fn-name { font-size: 0.84rem; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .fn-meta { font-family: var(--mono); font-size: 0.68rem; color: var(--subtle); }
 .fn-card .tag.risky { align-self: flex-start; }
-.fn-children { display: flex; flex-direction: column; gap: 12px; }
-.fn-branch { display: flex; align-items: center; }
-.fn-edge { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; width: 170px; padding: 0 8px; }
+.fn-children { display: flex; flex-direction: column; gap: var(--fn-gap); }
+.fn-branch { position: relative; display: flex; align-items: flex-start; }
+/* Trunk: from this branch's arrow down to the next sibling's arrow (gray, then green in the reveal). */
+.fn-branch:not(:last-child)::before, .fn-branch:not(:last-child)::after {
+  content: ''; position: absolute; left: 0; top: var(--fn-mid); height: calc(100% + var(--fn-gap));
+  border-left: 1.5px solid var(--border-strong);
+}
+.fn-edge {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; flex: none;
+  width: 170px; height: var(--fn-h); padding: 0 8px 0 0; box-sizing: border-box;
+}
 .fn-edge.faded { opacity: 0.45; }
 .flow-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
 .flow-foot .meta { margin: 0; flex: 1 1 240px; }
@@ -769,23 +780,29 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
   border-left: 8px solid var(--border-strong); border-top: 5px solid transparent; border-bottom: 5px solid transparent;
 }
 
-/* Reveal, one step at a time until everything is green: the start card's border draws itself in (0 to 100%),
-   then the arrow to the next screen fills left to right, then that card's border, and so on.
-   --d is a screen's depth from the start; each depth takes one card step plus one arrow step. */
-.flow-chart { --fn-t: 0.5s; --fn-green: var(--green); }
+/* Reveal, one screen at a time in reading order (never two at once): the start card's border draws itself in, then
+   for each next screen the trunk down to its row (if it is not a first child), its arrow, then its card.
+   FlowPanel gives every screen its own step numbers: --tt (trunk), --ta (arrow), --tr (card ring). */
+.flow-chart { --fn-t: 0.45s; --fn-green: var(--green); }
 .fn-card { position: relative; }
 .fn-ring { position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); overflow: visible; pointer-events: none; }
 .fn-ring path {
   fill: none; stroke: var(--fn-green); stroke-width: 1.5px; stroke-dasharray: 100; stroke-dashoffset: 100;
   animation: fn-draw var(--fn-t) linear forwards;
-  animation-delay: calc(var(--d, 0) * 2 * var(--fn-t));
+  animation-delay: calc(var(--tr, 0) * var(--fn-t));
 }
 @keyframes fn-draw { to { stroke-dashoffset: 0; } }
+.fn-branch:not(:last-child)::after {
+  z-index: 1; border-left-color: var(--fn-green); clip-path: inset(0 -2px 100% -2px);
+  animation: fn-down var(--fn-t) linear forwards;
+  animation-delay: calc(var(--tt, 0) * var(--fn-t));
+}
+@keyframes fn-down { to { clip-path: inset(0 -2px 0 -2px); } }
 .fn-fill {
   position: absolute; z-index: 1; left: 0; right: 0; top: -1.5px; height: 0; border-top: 1.5px solid var(--fn-green);
   clip-path: inset(-6px 100% -6px 0);
   animation: fn-mask var(--fn-t) linear forwards;
-  animation-delay: calc((var(--d, 0) * 2 + 1) * var(--fn-t));
+  animation-delay: calc(var(--ta, 0) * var(--fn-t));
 }
 .fn-fill::after {
   content: ''; position: absolute; right: -1px; top: -5.5px; width: 0; height: 0;
@@ -793,9 +810,9 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
 }
 @keyframes fn-mask { to { clip-path: inset(-6px -2px -6px 0); } }
 @media (prefers-reduced-motion: reduce) {
-  .fn-ring path, .fn-fill { animation: none !important; }
+  .fn-ring path, .fn-fill, .fn-branch::after { animation: none !important; }
   .fn-ring path { stroke-dashoffset: 0; }
-  .fn-fill { clip-path: none; }
+  .fn-fill, .fn-branch::after { clip-path: none; }
 }
 
 /* Note beside a card title, e.g. "Jira API and Figma API are recommended" on Details / Data. */
