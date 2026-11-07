@@ -598,12 +598,12 @@ ${JSON.stringify(items)}
 Put each checklist item on one screen:
 - A "live" item goes to the screen whose content, layout or copy it describes (use "texts" to tell them apart);
   one about the whole ticket, or that fits no screen clearly, goes to "S0".
-- A "playwright" item goes to a screen other than S0 when looking at that screen after its clicks proves it:
-  "clicking X opens / shows Y" goes to screen Y when Y is reached by clicking X (or by the same kind of element), and
-  anything Y displays (text, images, icons, links, layout) goes to Y. Example: for a modal reached by clicking a team
-  card, "clicking a card shows a modal", "the modal shows the biography" and "the modal shows a LinkedIn icon" all go
-  to that modal. Only what a screenshot cannot show stays "tests": typing, hovering, submitting, animations or
-  transitions themselves, server responses, or no matching screen.
+- A "playwright" item with category "behavior" (a click and what it opens, an animation or transition, typing, submitting,
+  validation, a server response) always goes to "tests": the Playwright tests prove behaviour, never screenshots.
+- Any other "playwright" item (what a hidden screen DISPLAYS: text, images, icons, links, layout) goes to the screen
+  that shows it. Example: for a modal reached by clicking a team card, "the modal shows the biography" and "the modal
+  shows a LinkedIn icon" go to that modal, while "clicking a card's arrow opens a modal that slides in from the left"
+  goes to "tests". With no matching screen it goes to "tests".
 
 A Figma prototype link alone does not make a screen part of the ticket: a screen other than S0 gets items only when
 the checklist really talks about it. Also judge S0 itself: does its design (name and "texts") look like the page this

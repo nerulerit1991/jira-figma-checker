@@ -675,7 +675,7 @@ async function checklistScreens(ticket, { map, full }, jira) {
   const items = [...itemsVerifiedBy(jira?.checklist, 'live'), ...itemsVerifiedBy(jira?.checklist, 'playwright')]
     .map((i) => ({ id: i.id, item: i.item, category: i.category, verifyBy: verifyByOf(i) }));
   if (!items.length) return {};
-  const key = createHash('sha256').update(JSON.stringify(['v2', items, map.screens.map((s) => [s.id, s.nodeId])])).digest('hex').slice(0, 16);
+  const key = createHash('sha256').update(JSON.stringify(['v3', items, map.screens.map((s) => [s.id, s.nodeId])])).digest('hex').slice(0, 16);
   if (map.checklistScreens?.key === key) return map.checklistScreens.assignments;
   const screens = map.screens.map((s) => ({
     id: s.id,
@@ -688,6 +688,8 @@ async function checklistScreens(ticket, { map, full }, jira) {
   const ids = new Set(map.screens.map((s) => s.id));
   const assignments = Object.fromEntries(items.map((i) => {
     const screen = (data.assignments || []).find((a) => a.id === i.id)?.screen;
+    // Behaviour (a click, what it opens, an animation, validation) is proven by the Playwright tests, never by screenshots.
+    if (i.category === 'behavior' && i.verifyBy === 'playwright') return [i.id, 'tests'];
     if (i.verifyBy === 'playwright') return [i.id, ids.has(screen) && screen !== 'S0' ? screen : 'tests'];
     return [i.id, ids.has(screen) ? screen : 'S0'];
   }));
