@@ -23,6 +23,7 @@ import Improvements from './components/Improvements.vue';
 import FlowPanel from './components/FlowPanel.vue';
 import ScreenTabs from './components/ScreenTabs.vue';
 import TokenBurst from './components/TokenBurst.vue';
+import TourGuide from './components/TourGuide.vue';
 import { statusClass } from './status.js';
 
 const store = {
@@ -655,7 +656,7 @@ async function retrieveJira() {
   if (force) {
     const ok = await confirmDialog.value.ask({
       title: 'Retrieve the Jira ticket again?',
-      message: 'This resets the ticket: the checklist is rebuilt, and all tests (ticket and global), test results, Check UI results and suggestions are removed. Figma data and links are kept. Creating the checklist uses AI tokens.',
+      message: 'This resets the ticket: the checklist is rebuilt, and all tests (ticket and default), test results, Check UI results and suggestions are removed. Figma data and links are kept. Creating the checklist uses AI tokens.',
       confirmLabel: 'Reset and retrieve',
     });
     if (!ok || selectedKey.value !== key) return;
@@ -664,6 +665,7 @@ async function retrieveJira() {
   noteRun('jira', status.value?.runs && jiraRunLabel.value);
   return run('jira', (key) => api.fetchJira(key, force, via, force), (res) => {
     jira.value = res.data;
+    if (res.flow) flow.value = res.flow;
     if (res.reset) {
       tests.value = check.value = checkErrors.value = improvements.value = flowCheck.value = null;
       globalTests.value = { ...globalTests.value, results: null, errors: null };
@@ -825,7 +827,7 @@ async function generateTests() {
     if (tests.value) {
       const ok = await confirmDialog.value.ask({
         title: 'Regenerate tests?',
-        message: 'Claude rewrites the ticket-specific scripts from the ticket and current page. Global test cases are kept separate. This uses tokens again and replaces the saved ticket scripts and last results.',
+        message: 'Claude rewrites the ticket-specific scripts from the ticket and current page. Default test cases are kept separate. This uses tokens again and replaces the saved ticket scripts and last results.',
         confirmLabel: 'Regenerate',
         danger: false,
       });
@@ -904,7 +906,7 @@ async function verifyScript({ file, hash, verified }) {
   }
 }
 
-// Re-runs only the tests that failed last time (ticket and global); passing results are kept.
+// Re-runs only the tests that failed last time (ticket and default); passing results are kept.
 const failedTestCount = computed(() => (tests.value?.results?.failed || 0) + (globalTests.value?.results?.failed || 0));
 function rerunFailedTests() {
   if (isBusy('run') || !failedTestCount.value) return;
@@ -934,6 +936,108 @@ async function createTicket(jiraUrl) {
   await loadTickets();
   if (selectedKey.value === created.key) await loadTicket(created.key);
   else selectedKey.value = created.key;
+}
+
+// ---- Guided tour: walks through the real flow on a throwaway TOUR-1 ticket (no tokens), removed at the end. ----
+const tourOpen = ref(false);
+const TOUR_KEY = 'TOUR-1';
+const TOUR_URL = `https://example.atlassian.net/browse/${TOUR_KEY}`;
+const TOUR_JIRA = {
+  key: TOUR_KEY,
+  summary: '[Tour] Login page: email, password and error message',
+  status: 'For checking',
+  issueType: 'Story',
+  priority: 'Medium',
+  assignee: null,
+  labels: [],
+  lastUpdated: new Date().toISOString(),
+  lastUpdatedBy: 'Walkthrough',
+  description: 'Sample ticket made by the walkthrough. It is removed when the tour ends.',
+  acceptanceText: '',
+  figmaLinks: [],
+  otherLinks: [],
+  checklist: [
+    { id: 'C1', item: 'Login form shows email and password fields', category: 'ui', verifyBy: 'live' },
+    { id: 'C2', item: 'Primary button reads "Sign in"', category: 'ui', verifyBy: 'live' },
+    { id: 'C3', item: 'Wrong password shows an error message', category: 'behavior', verifyBy: 'playwright' },
+  ],
+};
+const TOUR_FIGMA_URL = 'https://www.figma.com/design/EXAMPLE/Login?node-id=1-2';
+const TOUR_PAGE_URL = 'http://localhost:3000/login';
+let tourPrevKey = null;
+// Shows a step's real spinner for a moment without calling the server.
+function tourFake(action, ms) {
+  if (selectedKey.value !== TOUR_KEY) return;
+  return run(action, () => sleep(ms), () => {});
+}
+let tourMadeTicket = false;
+let tourAdding = null;
+
+const tour = {
+  start() {
+    tourPrevKey = selectedKey.value;
+    tourMadeTicket = !tickets.value.some((t) => t.key === TOUR_KEY);
+  },
+  openDialog: () => newTicketDialog.value.open({ modal: false }),
+  typeUrl: () => newTicketDialog.value.typeUrl(TOUR_URL),
+  // Real create: only writes data/TOUR-1/ticket.json, no tokens.
+  addTicket() {
+    tourAdding = newTicketDialog.value.submit();
+    return tourAdding;
+  },
+  // Simulated retrieve: shows the real spinner, then fills sample Jira data locally (nothing is fetched or saved).
+  async retrieve() {
+    if (selectedKey.value !== TOUR_KEY) return;
+    await run('jira', () => sleep(1400).then(() => ({ data: TOUR_JIRA })), (res) => (jira.value = res.data));
+  },
+  // The rest is acted out only: the real spinners run, but nothing is fetched, checked, written or saved.
+  async typeFigma() {
+    if (selectedKey.value !== TOUR_KEY) return;
+    figmaUrl.value = '';
+    for (const ch of TOUR_FIGMA_URL) {
+      figmaUrl.value += ch;
+      await sleep(18);
+    }
+  },
+  retrieveFigma: () => tourFake('figma', 1400),
+  async typePageUrl() {
+    if (selectedKey.value !== TOUR_KEY) return;
+    pageUrl.value = '';
+    for (const ch of TOUR_PAGE_URL) {
+      pageUrl.value += ch;
+      await sleep(25);
+    }
+  },
+  checkUi: () => tourFake('check', 1800),
+  generateTests: () => tourFake('tests', 1800),
+  runTests: () => tourFake('run', 1600),
+  async end() {
+    // Finish a still-running Add first, so the ticket it creates is not left behind.
+    await tourAdding?.catch(() => {});
+    tourAdding = null;
+    newTicketDialog.value?.close();
+    if (tourMadeTicket) {
+      await api.deleteTicket(TOUR_KEY).catch(() => {}); // 404 when the tour ended before Add ticket
+      clearFieldErrors(TOUR_KEY);
+      await loadTickets();
+    }
+    selectedKey.value = tickets.value.some((t) => t.key === tourPrevKey) ? tourPrevKey : tickets.value[0]?.key ?? null;
+    tourMadeTicket = false;
+  },
+};
+
+// A tour cut off mid-way (page reload, closed tab) leaves TOUR-1 behind; remove it on the next load.
+// Only a ticket the tour made (its example link, never retrieved) is removed, never a real TOUR-1.
+async function removeStaleTourTicket() {
+  try {
+    const list = await api.tickets();
+    const t = list.find((x) => x.key === TOUR_KEY);
+    if (!t || t.hasJira) return;
+    const { ticket: saved } = await api.ticket(TOUR_KEY);
+    if (saved?.jiraUrl === TOUR_URL) await api.deleteTicket(TOUR_KEY);
+  } catch {
+    /* non-critical */
+  }
 }
 
 async function deleteCurrent() {
@@ -984,6 +1088,7 @@ onMounted(async () => {
   loadViewports();
   loadAgentUsage();
   try {
+    await removeStaleTourTicket();
     await loadTickets();
     loadTicket(selectedKey.value);
   } catch (e) {
@@ -1003,10 +1108,13 @@ onMounted(async () => {
             <path d="M16 4c-5 0-7 2-7 7v4c0 3-2 5-5 5 3 0 5 2 5 5v4c0 5 2 7 7 7M24 4c5 0 7 2 7 7v4c0 3 2 5 5 5-3 0-5 2-5 5v4c0 5-2 7-7 7" fill="none" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" />
           </svg><span aria-hidden="true">DE</span>
         </span>
+        <button class="icon help-btn" title="Show tour" aria-label="Show tour" @click="tourOpen = true">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>
+        </button>
       </div>
 
       <div class="ticket-actions">
-        <button class="primary new-btn" @click="newTicketDialog.open()">
+        <button class="primary new-btn" data-tour="new-ticket" @click="newTicketDialog.open()">
           <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
           New ticket
         </button>
@@ -1016,9 +1124,9 @@ onMounted(async () => {
         </button>
       </div>
 
-      <TicketNav v-model="selectedKey" :tickets="tickets" :busy-keys="busyKeys" @reorder="reorderTickets" />
+      <TicketNav data-tour="tickets" v-model="selectedKey" :tickets="tickets" :busy-keys="busyKeys" @reorder="reorderTickets" />
 
-      <div class="sidebar-foot">
+      <div class="sidebar-foot" data-tour="connections">
         <div class="connections-head">
           <p class="nav-label">Connections</p>
           <button class="icon" :disabled="statusLoading || signOutBusy" :class="{ spinning: statusLoading }" title="Recheck connections" aria-label="Recheck connections" @click="loadStatus(true)">
@@ -1082,7 +1190,7 @@ onMounted(async () => {
         <div class="content-grid">
           <div class="content-main">
             <!-- 01 Details / Data -->
-            <section class="card">
+            <section class="card" data-tour="details">
               <div class="card-head">
                 <span class="step">01</span>
                 <h2>Details / Data</h2>
@@ -1095,7 +1203,7 @@ onMounted(async () => {
 
               <!-- A disabled fieldset disables every input, radio and button inside it. -->
               <fieldset class="sources" :disabled="dataLocked" :title="dataLocked ? 'Locked while a check or test runs on these details' : null">
-                <div class="source">
+                <div class="source" data-tour="jira-section">
                   <span class="field-label">Jira section</span>
                   <div class="via-row">
                   <div class="via-tabs" role="tablist" aria-label="Read Jira from">
@@ -1119,7 +1227,7 @@ onMounted(async () => {
                   <div class="inline-field">
                     <input id="jira-link" :value="ticket.jiraUrl" readonly />
                     <TokenBurst :burst="burst" target="jira" />
-                    <button class="primary small" :disabled="isBusy('jira')" @click="retrieveJira" aria-label="Retrieve Jira">
+                    <button class="primary small" data-tour="retrieve-jira" :disabled="isBusy('jira')" @click="retrieveJira" aria-label="Retrieve Jira">
                       <span v-if="isBusy('jira')" class="spinner" aria-hidden="true"></span>
                       <span v-else>↻</span>
                     </button>
@@ -1137,7 +1245,7 @@ onMounted(async () => {
                   <p v-if="fieldError('jira')" class="source-error" role="alert">{{ fieldError('jira') }}</p>
                 </div>
 
-                <div class="source">
+                <div class="source" data-tour="figma-section">
                   <span class="field-label">Figma section</span>
                   <div class="via-radios" role="radiogroup" aria-label="Read Figma from">
                     <label v-for="tab in FIGMA_TABS" :key="tab.via" class="via-radio" :class="{ on: figmaVia === tab.via }">
@@ -1171,6 +1279,7 @@ onMounted(async () => {
                     <button
                       class="primary small"
                       :disabled="isBusy('figma') || (figmaVia !== 'bridge' && !figmaUrl && !jira?.figmaLinks?.length)"
+                      data-tour="retrieve-figma"
                       @click="retrieveFigma"
                       aria-label="Retrieve Figma"
                     >
@@ -1217,7 +1326,7 @@ onMounted(async () => {
                   <p v-if="fieldError('figma')" class="source-error" role="alert">{{ fieldError('figma') }}</p>
                 </div>
 
-                <div class="source">
+                <div class="source" data-tour="page-url">
                   <label class="field-label" for="page-link">Page URL</label>
                   <div class="inline-field">
                     <input id="page-link" v-model.trim="pageUrl" aria-label="Page URL" aria-describedby="page-link-note" placeholder="http://localhost:3000/login" @change="saveLinks" />
@@ -1250,7 +1359,7 @@ onMounted(async () => {
             </section>
 
             <!-- 02 Check -->
-            <section class="card">
+            <section class="card" data-tour="check">
               <div class="card-head tests-card-head">
                 <span class="step">02</span>
                 <h2>Check UI</h2>
@@ -1270,7 +1379,7 @@ onMounted(async () => {
                 >
                   Re-check {{ checkErrorCount }} error{{ checkErrorCount === 1 ? '' : 's' }}
                 </button>
-                <button class="primary small" :disabled="!jira?.checklist?.length || !pageUrl || isBusy('check') || isBusy('flow') || isBusy('jira') || isBusy('figma')" @click="checkUi" aria-label="Check UI">
+                <button class="primary small" :disabled="!jira?.checklist?.length || !pageUrl || isBusy('check') || isBusy('flow') || isBusy('jira') || isBusy('figma')" data-tour="check-ui" @click="checkUi" aria-label="Check UI">
                   <span v-if="isBusy('check') || isBusy('flow')" class="spinner" aria-hidden="true"></span>
                   <svg v-else viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l10-6.5z" /></svg>
                 </button>
@@ -1291,6 +1400,7 @@ onMounted(async () => {
                 <FlowPanel
                   v-if="figmaHasSpecs"
                   :flow="flow"
+                  :flow-need="jira?.flow || null"
                   :flow-check="flowCheck"
                   :check="check"
                   :api-frame="flowApiFrame"
@@ -1402,7 +1512,7 @@ onMounted(async () => {
             </section>
 
             <!-- 03 Functional & API tests -->
-            <section class="card">
+            <section class="card" data-tour="tests">
               <div class="card-head tests-card-head">
                 <span class="step">03</span>
                 <h2>Functional &amp; API tests</h2>
@@ -1410,7 +1520,7 @@ onMounted(async () => {
                   <span v-for="chip in clickedRuns.tests" :key="chip" class="run-chip" :title="chip" :class="{ busy: isBusy('tests') }">{{ chip }}</span>
                 </span>
                 <div class="tests-card-actions">
-                  <button class="regen-tab" :disabled="!jira || !pageUrl || generatingTestsPending || isBusy('tests') || isBusy('run')" @click="generateTests">
+                  <button class="regen-tab" data-tour="generate-tests" :disabled="!jira || !pageUrl || generatingTestsPending || isBusy('tests') || isBusy('run')" @click="generateTests">
                     <span v-if="isBusy('tests')" class="spinner" aria-hidden="true"></span>
                     {{ isBusy('tests') ? 'Writing tests…' : tests ? 'Regenerate tests' : 'Generate tests' }}
                   </button>
@@ -1423,7 +1533,7 @@ onMounted(async () => {
                   >
                     Re-run {{ failedTestCount }} failed
                   </button>
-                  <button v-if="canRunAnyTests" class="primary small" :disabled="!pageUrl || isBusy('tests') || isBusy('run')" @click="runTests()" :title="isBusy('run') ? 'Running all tests' : 'Run all tests'" :aria-label="isBusy('run') ? 'Running all tests' : 'Run all tests'">
+                  <button v-if="canRunAnyTests" class="primary small" data-tour="run-tests" :disabled="!pageUrl || isBusy('tests') || isBusy('run')" @click="runTests()" :title="isBusy('run') ? 'Running all tests' : 'Run all tests'" :aria-label="isBusy('run') ? 'Running all tests' : 'Run all tests'">
                     <span v-if="isBusy('run')" class="spinner" aria-hidden="true"></span>
                     <svg v-else viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l10-6.5z" /></svg>
                   </button>
@@ -1455,7 +1565,7 @@ onMounted(async () => {
             </section>
 
             <!-- 04 What can be improved? -->
-            <section class="card">
+            <section class="card" data-tour="improve">
               <div class="card-head tests-card-head">
                 <span class="step">04</span>
                 <h2>What can be improved? <span class="optional-tag">(Optional)</span></h2>
@@ -1496,7 +1606,7 @@ onMounted(async () => {
           </div>
 
           <!-- Right column widgets -->
-          <aside class="content-side">
+          <aside class="content-side" data-tour="scores">
             <section class="widget">
               <h3 class="widget-title">Scores</h3>
               <template v-if="check || testsScore">
@@ -1610,5 +1720,6 @@ onMounted(async () => {
     <FrameSelectDialog ref="frameSelectDialog" />
     <FigmaProjectDialog ref="figmaProjectDialog" />
     <FigmaSaveProjectDialog ref="figmaSaveDialog" />
+    <TourGuide v-model:open="tourOpen" :tour="tour" />
   </div>
 </template>

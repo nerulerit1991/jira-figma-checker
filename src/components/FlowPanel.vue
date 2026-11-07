@@ -8,6 +8,8 @@ import { screenState, checkedScreens, itemsOnScreen } from '../../server/flowSco
 // (flowScope.js) and shows their results in the tabs of the checklist, Figma and responsive sections.
 const props = defineProps({
   flow: { type: Object, default: null },
+  // From the Jira checklist: { needed, reason }. needed false means the ticket only displays content, so no flow.
+  flowNeed: { type: Object, default: null },
   flowCheck: { type: Object, default: null },
   // The main Check UI result, for the starting screen's mark in the chart.
   check: { type: Object, default: null },
@@ -48,7 +50,9 @@ const start = computed(() => props.flow?.screens?.find((s) => s.kind === 'start'
 // rows and the longest chain of clicks is the last row (ties keep click order).
 const childrenOf = computed(() => {
   const all = props.flow?.screens || [];
-  const direct = (id) => all.filter((s) => s.parentId === id);
+  // Jira first: a Figma screen the checklist never mentions is left out (unless a mentioned screen is reached through it).
+  const inTicket = (s) => screenState(props.flow, s) !== 'not-in-ticket' || all.some((c) => c.parentId === s.id && inTicket(c));
+  const direct = (id) => all.filter((s) => s.parentId === id && inTicket(s));
   const size = (id) => direct(id).reduce((n, c) => n + 1 + size(c.id), 0);
   const map = {};
   for (const s of all) map[s.id] = direct(s.id).map((c, i) => ({ c, i, n: size(c.id) })).sort((a, b) => a.n - b.n || a.i - b.i).map((x) => x.c);
@@ -121,6 +125,13 @@ onBeforeUnmount(stopFollow);
 const unreached = computed(() => checked.value.filter((s) => resultOf(s) && !resultOf(s).reached));
 const pending = computed(() => screens.value.some((s) => stateOf(s) === 'pending'));
 const notInTicket = computed(() => screens.value.filter((s) => stateOf(s) === 'not-in-ticket').length);
+// Prototype links alone do not make a flow: when the checklist is about none of the linked screens, there is no flow.
+const noneInTicket = computed(() => screens.value.length > 0 && notInTicket.value === screens.value.length);
+const noFlow = computed(() => props.flowNeed?.needed === false);
+// The ticket has not been asked yet (older tickets): no chart until Jira says there is a flow.
+const undecided = computed(() => !props.flowNeed);
+const shownCount = computed(() => screens.value.filter((s) => stateOf(s) !== 'not-in-ticket').length);
+const startMatch = computed(() => props.flow?.checklistScreens?.startMatch || null);
 const skippedNotes = computed(() => {
   const k = props.flow?.skipped;
   if (!k) return [];
@@ -136,18 +147,38 @@ const skippedNotes = computed(() => {
   <details class="accordion flow" @toggle="(e) => e.target.open && replay++">
     <summary>
       <span class="acc-title">Interaction flow</span>
-      <span v-if="screens.length" class="score-chip">{{ screens.length + 1 }} screens</span>
+      <span v-if="noFlow" class="score-chip">not needed</span>
+      <span v-else-if="undecided" class="score-chip">not decided</span>
+      <span v-else-if="startMatch && !startMatch.matches" class="score-chip bad">Figma frame doesn't match ticket</span>
+      <span v-else-if="noneInTicket" class="score-chip">not in this ticket</span>
+      <span v-else-if="screens.length" class="score-chip">{{ shownCount + 1 }} screens</span>
       <span v-else-if="flow" class="score-chip">no links</span>
       <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
     </summary>
 
-    <p v-if="!apiFrame" class="hint">
-      Shows the pages and modals this frame's prototype links lead to in Figma, and checks the ones the Jira ticket talks
-      about by clicking through on the live site. It reads the whole Figma file, so retrieve the frame on the Figma API tab.
+    <p v-if="noFlow" class="hint">
+      This ticket doesn't need an interaction flow: {{ flowNeed.reason || 'it does not ask to go to another page or modal.' }}
+      Check UI checks this page only, whatever the Figma prototype links to.
+    </p>
+    <p v-else-if="undecided" class="hint">
+      The Jira ticket decides whether there is a flow (a criterion like "clicking X opens Y"); Figma only maps it. This is
+      decided the next time you retrieve Jira or Figma or run Check UI.
+    </p>
+    <p v-else-if="!apiFrame" class="hint">
+      The Jira ticket asks for a flow; this maps it with the frame's prototype links in Figma and checks only the screens
+      the ticket talks about by clicking through on the live site. It reads the whole Figma file, so retrieve the frame on the Figma API tab.
     </p>
     <template v-else-if="flow">
-      <p v-if="!screens.length" class="hint">“{{ flow.startName }}” has no prototype links to another frame or overlay in Figma, so Check UI checks this frame only.</p>
-      <template v-else>
+      <p v-if="startMatch && !startMatch.matches" class="hint bad-text">
+        The linked Figma frame “{{ flow.startName }}” doesn't look like this ticket's page: {{ startMatch.reason }}
+        Check the Figma link before trusting the design results.
+      </p>
+      <p v-if="noneInTicket" class="hint">
+        “{{ flow.startName }}” links to {{ screens.length }} other screen{{ screens.length === 1 ? '' : 's' }} in Figma, but no
+        Jira checklist item is about {{ screens.length === 1 ? 'it' : 'them' }}, so there is no interaction flow to check for this ticket.
+      </p>
+      <p v-else-if="!screens.length" class="hint">“{{ flow.startName }}” has no prototype links to another frame or overlay in Figma, so Check UI checks this frame only.</p>
+      <template v-else-if="!noneInTicket">
         <div :key="replay" ref="chart" class="flow-chart" @wheel.passive="stopFollow" @pointerdown="stopFollow" @touchstart.passive="stopFollow" role="group" aria-label="Screens and the clicks between them">
           <FlowNode
             :screen="start"
@@ -165,7 +196,7 @@ const skippedNotes = computed(() => {
         <div class="flow-foot">
           <p class="meta">
             <template v-if="busy">Clicking through {{ checked.length }} screen{{ checked.length === 1 ? '' : 's' }} at desktop, tablet and mobile…</template>
-            <template v-else-if="pending">Check UI splits the Jira checklist across these screens and checks the ones it talks about.</template>
+            <template v-else-if="pending">Mapped from Figma for the flow the ticket asks for. Check UI matches the checklist to these screens and hides any the ticket does not mention.</template>
             <template v-else-if="notInTicket">{{ notInTicket }} screen{{ notInTicket === 1 ? ' is' : 's are' }} marked “not in this ticket”: no Jira checklist item is about {{ notInTicket === 1 ? 'it' : 'them' }}, so Check UI skips {{ notInTicket === 1 ? 'it' : 'them' }}.</template>
           </p>
           <button v-if="checked.length" class="ghost small" :disabled="locked" :title="`Click through and check ${checked.length} screen${checked.length === 1 ? '' : 's'} without re-running the first one`" @click="emit('run')">

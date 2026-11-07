@@ -26,7 +26,7 @@ import {
   fullFigmaLocation,
   resetTicketResults,
 } from './store.js';
-import { jiraPrompt, jiraChecklistPrompt, figmaPrompt, figmaBridgePrompt, checkPrompt, recheckPrompt, improvementsPrompt, flowScreenPrompt, flowAssignPrompt } from './prompts.js';
+import { jiraPrompt, jiraChecklistPrompt, figmaPrompt, figmaBridgePrompt, checkPrompt, recheckPrompt, improvementsPrompt, flowScreenPrompt, flowAssignPrompt, flowNeedPrompt } from './prompts.js';
 import { createHash } from 'node:crypto';
 import { buildFlowMap, runFlow, flowShotPath, MAX_SCREENS } from './flow.js';
 import { checkedScreens, screenState } from './flowScope.js';
@@ -97,7 +97,7 @@ function once(id, fn) {
 
 // Generate, run, re-run failed and global run all write data/<KEY>/tests/, so only one runs per ticket at a time:
 // the same job started again joins the running one; a different one is refused instead of clobbering its files.
-const TEST_JOBS = { generate: 'Generating tests', run: 'A test run', rerun: 'Re-running failed tests', global: 'A global test run' };
+const TEST_JOBS = { generate: 'Generating tests', run: 'A test run', rerun: 'Re-running failed tests', global: 'A default test run' };
 function testsJob(key, kind, fn) {
   const running = Object.keys(TEST_JOBS).find((other) => other !== kind && inFlight.has(`tests-${other}:${key}`));
   if (running) throw httpError(409, `${TEST_JOBS[running]} is still in progress for ${key}. Try again when it finishes.`);
@@ -233,7 +233,9 @@ app.get('/api/tickets/:key', async (req, res) => {
   // Rebuilt from the check so items the Jira step now gives to Playwright or marks not testable drop out.
   const checkErrors = check ? buildCheckErrors(check, jira?.checklist) : savedErrors;
   // Tickets whose frame was picked before the flow existed get their map once (no tokens; reads the saved file).
-  const flowMap = flow || (figma?.via === 'api' ? (await currentFlowMap(ticket).catch(() => null))?.map || null : null);
+  let flowMap = flow || (figma?.via === 'api' ? (await currentFlowMap(ticket).catch(() => null))?.map || null : null);
+  // Jira first: tickets made before the flow decision get it once on open (one small AI call, then saved).
+  if (jira && !jira.flow) jira.flow = await once(`flow-need:${ticket.key}`, () => flowNeed(ticket)).catch(() => null);
   res.json({ ticket, jira, figma, check, checkErrors, improvements, flow: flowMap, flowCheck, tests, globalTests, figmaSaved, login, tokens: await tokenTotals(ticket.key) });
 });
 
@@ -316,6 +318,7 @@ app.post('/api/tickets/:key/jira', async (req, res) => {
         ...issue,
         acceptanceCriteria: data.acceptanceCriteria || [],
         checklist: data.checklist || [],
+        flow: flowNeedOf(data),
         url: jiraUrl,
         mcpServer: 'Jira API',
         via: 'api',
@@ -340,6 +343,7 @@ app.post('/api/tickets/:key/jira', async (req, res) => {
       url: jiraUrl,
       acceptanceCriteria: checklist.acceptanceCriteria || [],
       checklist: checklist.checklist || [],
+      flow: flowNeedOf(checklist),
       mcpServer: server,
       via: 'mcp',
       fetchedAt: new Date().toISOString(),
@@ -426,7 +430,7 @@ app.post('/api/tickets/:key/figma', async (req, res) => {
       });
       return saved;
     });
-    // The frame's prototype links, mapped now so the flow chart shows straight away (no tokens).
+    // The frame's prototype links, mapped now (no tokens). The checklist is sorted onto the screens by Check UI.
     const flow = (await currentFlowMap({ key }).catch(() => null))?.map || null;
     return res.json({ cached: false, data, flow });
   }
@@ -510,6 +514,7 @@ app.post('/api/tickets/:key/figma/frame', async (req, res) => {
       ai: { costUsd: 0, usage: {}, source: 'figma-api' },
     }),
   );
+  // Map only (free, instant). The checklist is sorted onto the screens by Check UI.
   const flow = (await currentFlowMap(ticket).catch(() => null))?.map || null;
   res.json({ data, flow });
 });
@@ -630,8 +635,32 @@ async function currentFlowMap(ticket, { rebuild = false } = {}) {
   return { map, full };
 }
 
-/** The flow when the ticket's Figma frame (API tab) has prototype links to other screens; null otherwise. */
+/**
+ * The ticket's flow decision. Tickets whose checklist predates the decision get it now from one small text-only AI
+ * call (saved into jira.json, checklist untouched). Null when there is no Jira data yet.
+ */
+async function flowNeed(ticket) {
+  const jira = await readJson(ticket.key, 'jira');
+  if (!jira) return null;
+  if (jira.flow) return jira.flow;
+  const { data } = await runAgentJson({ ...flowNeedPrompt(jira), track: { key: ticket.key, source: 'jira' } });
+  const need = flowNeedOf(data);
+  if (need) await writeJson(ticket.key, 'jira', { ...jira, flow: need });
+  return need;
+}
+
+/** Whether the ticket asks for moving to another page or modal ({ needed, reason }), from the checklist call; null if unknown. */
+function flowNeedOf(data) {
+  return typeof data?.flow?.needed === 'boolean' ? { needed: data.flow.needed, reason: String(data.flow.reason || '').slice(0, 300) } : null;
+}
+
+/**
+ * The flow when the ticket asks for one and its Figma frame (API tab) has prototype links to other screens; null
+ * otherwise. A ticket that only displays content has no flow, whatever the Figma prototype links to.
+ */
 async function activeFlow(ticket) {
+  // Jira first: only a ticket that asks to go to another page or modal has a flow; Figma then maps it.
+  if ((await flowNeed(ticket))?.needed !== true) return null;
   const flow = await currentFlowMap(ticket).catch(() => null);
   return flow && flow.map.screens.length > 1 ? flow : null;
 }
@@ -646,7 +675,7 @@ async function checklistScreens(ticket, { map, full }, jira) {
   const items = [...itemsVerifiedBy(jira?.checklist, 'live'), ...itemsVerifiedBy(jira?.checklist, 'playwright')]
     .map((i) => ({ id: i.id, item: i.item, category: i.category, verifyBy: verifyByOf(i) }));
   if (!items.length) return {};
-  const key = createHash('sha256').update(JSON.stringify([items, map.screens.map((s) => [s.id, s.nodeId])])).digest('hex').slice(0, 16);
+  const key = createHash('sha256').update(JSON.stringify(['v2', items, map.screens.map((s) => [s.id, s.nodeId])])).digest('hex').slice(0, 16);
   if (map.checklistScreens?.key === key) return map.checklistScreens.assignments;
   const screens = map.screens.map((s) => ({
     id: s.id,
@@ -655,15 +684,18 @@ async function checklistScreens(ticket, { map, full }, jira) {
     path: s.steps.map((step) => `click "${step.text}"`).join(' → ') || null,
     texts: frameFromFile(full, s.nodeId).texts.slice(0, 40),
   }));
-  const { data } = await runAgentJson({ ...flowAssignPrompt({ items, screens }), track: { key: ticket.key, source: 'check' } });
+  const { data } = await runAgentJson({ ...flowAssignPrompt({ items, screens, ticket: { key: ticket.key, summary: jira?.summary } }), track: { key: ticket.key, source: 'check' } });
   const ids = new Set(map.screens.map((s) => s.id));
   const assignments = Object.fromEntries(items.map((i) => {
     const screen = (data.assignments || []).find((a) => a.id === i.id)?.screen;
     if (i.verifyBy === 'playwright') return [i.id, ids.has(screen) && screen !== 'S0' ? screen : 'tests'];
     return [i.id, ids.has(screen) ? screen : 'S0'];
   }));
-  await writeJson(ticket.key, 'flow', { ...map, checklistScreens: { key, assignments, at: new Date().toISOString() } });
-  map.checklistScreens = { key, assignments };
+  // Whether the linked Figma frame looks like this ticket's page at all; false means the Figma link is probably wrong.
+  const startMatch = typeof data.start?.matchesTicket === 'boolean' ? { matches: data.start.matchesTicket, reason: String(data.start.reason || '').slice(0, 300) } : null;
+  const checklistScreensData = { key, assignments, startMatch, at: new Date().toISOString() };
+  await writeJson(ticket.key, 'flow', { ...map, checklistScreens: checklistScreensData });
+  map.checklistScreens = checklistScreensData;
   return assignments;
 }
 
@@ -683,6 +715,8 @@ app.post('/api/tickets/:key/flow/check', async (req, res) => {
   const ticket = await requireTicket(req.params.key);
   const url = requireUrl(req.body.url || ticket.pageUrl, 'Page URL');
   const { map, full } = await currentFlowMap(ticket);
+  const need = await flowNeed(ticket);
+  if (need?.needed !== true) throw httpError(400, `This ticket has no interaction flow${need?.reason ? `: ${need.reason}` : ': retrieve the Jira ticket first.'}`);
   if (map.screens.length < 2) throw httpError(400, `"${map.startName}" has no prototype links to another frame or overlay in Figma, so there is nothing to follow.`);
   const jira = await readJson(ticket.key, 'jira');
   const data = await once(`flow:${ticket.key}`, async () => {

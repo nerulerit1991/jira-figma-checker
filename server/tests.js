@@ -95,9 +95,13 @@ export function validateScript(content, allowedOrigins) {
   const imports = [...content.matchAll(/^\s*import\s[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => m[1]);
   if (!imports.length || imports.some((m) => m !== '@playwright/test')) return 'imports something other than @playwright/test';
   const forbidden = content.match(
-    /\.cookies\s*\(|document\s*\.\s*cookie|\brequire\s*\(|\bimport\s*\(|\bprocess\b|child_process|\bfs\b|node:|\beval\s*\(|\bFunction\s*\(|globalThis|__dirname|__filename|WebSocket|\.exposeFunction|\.addInitScript|setExtraHTTPHeaders|storageState|\.route\s*\(/,
+    /\.cookies\s*\(|document\s*\.\s*cookie|\brequire\s*\(|\bimport\s*\(|\bprocess\b|child_process|\bfs\b|node:|\beval\s*\(|\bFunction\s*\(|globalThis|__dirname|__filename|WebSocket|\.exposeFunction|\.addInitScript|setExtraHTTPHeaders|storageState|routeFromHAR|routeWebSocket|route\s*\.\s*fetch\s*\(/,
   );
   if (forbidden) return `uses "${forbidden[0].trim()}", which is not allowed`;
+  // page.route() is allowed only to mock responses (route.fulfill) for empty-state tests. Passing a request on with
+  // changes (a new method, URL or body) could turn a read into a write, so continue()/fallback() must take no arguments.
+  const changedPassThrough = content.match(/\.\s*(continue|fallback)\s*\(\s*[^)\s]/);
+  if (changedPassThrough) return `uses "${changedPassThrough[1]}()" with overrides; route handlers may only fulfill or pass requests on unchanged`;
   for (const [, raw] of content.matchAll(/(https?:\/\/[^\s'"`)]+)/g)) {
     let origin;
     try {
@@ -417,7 +421,7 @@ async function checkSavedScripts(dir, url) {
   return { files, unverified, unverifiedRows: [...Object.values(skipOnly).flat(), ...unverifiedRows], skipOnly };
 }
 
-const globalRunOptions = (dir) => ({ label: 'Global tests', configDir: path.dirname(GLOBAL_SPEC_FILE), reportDir: dir, filePrefix: 'global-' });
+const globalRunOptions = (dir) => ({ label: 'Default tests', configDir: path.dirname(GLOBAL_SPEC_FILE), reportDir: dir, filePrefix: 'global-' });
 
 /** Runs the saved scripts with Playwright on this machine. Uses no tokens. */
 export async function runTests(key, url) {
