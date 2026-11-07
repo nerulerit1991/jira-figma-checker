@@ -664,7 +664,8 @@ li.skip .item { color: var(--muted); }
 .check-target { margin-left: auto; font-family: var(--mono); font-size: 0.74rem; color: var(--subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 /* Figma source as radio buttons (same green as the primary buttons) */
-.via-radios { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 10px; min-height: 28px; align-items: center; }
+/* Lines start at the top, so the radios stay put whether or not the token hint wraps onto a second line. */
+.via-radios { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 10px; min-height: 28px; align-items: center; align-content: flex-start; }
 .via-radio { display: inline-flex; min-width: 0; align-items: center; gap: 6px; font-size: 0.76rem; color: var(--subtle); cursor: pointer; white-space: nowrap; }
 .via-radio.on, .via-radio:hover { color: var(--text); }
 .via-radio input {
@@ -710,3 +711,112 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
 .imp-summary { margin: 14px 0 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--inset); font-size: 0.86rem; color: #d4d3de; }
 .imp-note { color: var(--muted); }
 .optional-tag { font-weight: 400; font-size: 0.8em; color: var(--subtle); }
+
+/* Interaction flow (Check UI): screens reached by clicking, from Figma's prototype links */
+.tag.risky { color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); }
+.flow-skipped { margin: 12px 0 0; padding-left: 18px; font-size: 0.78rem; color: var(--subtle); }
+
+/* Screen tabs inside the Check UI sections (interaction flow on) */
+.screen-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+.screen-tab {
+  display: inline-flex; align-items: center; gap: 8px; flex: none; max-width: 260px; height: 32px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); font-size: 0.8rem; cursor: pointer;
+}
+.screen-tab:hover { color: var(--text); border-color: var(--border-strong); }
+.screen-tab.active { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.screen-tab.off { opacity: 0.55; }
+.screen-tab .st-num { font-family: var(--mono); font-size: 0.7rem; color: var(--subtle); }
+.screen-tab.active .st-num { color: var(--text); }
+.screen-tab .st-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-panel > .hint:first-child { margin-top: 12px; }
+.tab-panel > .meta:first-child { margin-top: 12px; }
+.findings-screen { margin: 12px 0 6px; font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+.issue-element { font-weight: 600; color: inherit; }
+.issue-selector {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-family: var(--mono); font-size: 0.68rem;
+  color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); overflow-wrap: anywhere;
+}
+
+/* Interaction flow chart: screens as cards, clicks as labelled arrows (scrolls sideways inside the panel if wide).
+   Laid out as a tree that reads left to right, top to bottom: a screen sits on the same row as its first child, so a
+   chain of clicks is one straight row; its other children hang below, joined by a vertical trunk. Every arrow sits at
+   --fn-mid, the middle of a standard card. FlowPanel orders siblings shortest branch first. */
+.flow-chart { --fn-h: 86px; --fn-mid: calc(var(--fn-h) / 2); --fn-gap: 14px; margin-top: 14px; overflow-x: auto; padding-bottom: 6px; }
+.fn { display: flex; align-items: flex-start; width: max-content; }
+.fn-card {
+  display: flex; flex-direction: column; gap: 4px; flex: none; width: 190px; min-height: var(--fn-h); padding: 10px 12px; box-sizing: border-box;
+  border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface);
+}
+.fn-card.not-in-ticket, .fn-card.risky { opacity: 0.55; border-style: dashed; }
+.fn-card .fn-allow { align-self: flex-start; height: 24px; padding: 0 8px; font-size: 0.72rem; }
+.fn-card.risky .fn-allow { opacity: 1; }
+.fn-top { display: flex; align-items: center; gap: 6px; }
+.fn-top input[type=checkbox] { flex: none; width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--accent); }
+.fn-num { font-family: var(--mono); font-size: 0.7rem; color: var(--subtle); }
+.fn-name { font-size: 0.84rem; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.fn-meta { font-family: var(--mono); font-size: 0.68rem; color: var(--subtle); }
+.fn-card .tag.risky { align-self: flex-start; }
+.fn-children { display: flex; flex-direction: column; gap: var(--fn-gap); }
+.fn-branch { position: relative; display: flex; align-items: flex-start; }
+/* Trunk: from this branch's arrow down to the next sibling's arrow (gray, then green in the reveal). */
+.fn-branch:not(:last-child)::before, .fn-branch:not(:last-child)::after {
+  content: ''; position: absolute; left: 0; top: var(--fn-mid); height: calc(100% + var(--fn-gap));
+  border-left: 1.5px solid var(--border-strong);
+}
+.fn-edge {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; flex: none;
+  width: 170px; height: var(--fn-h); padding: 0 8px 0 0; box-sizing: border-box;
+}
+.fn-edge.faded { opacity: 0.45; }
+.flow-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.flow-foot .meta { margin: 0; flex: 1 1 240px; }
+.flow-skipped li.bad { color: #e8b9b9; }
+.fn-click, .fn-action { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 0.66rem; }
+.fn-click { color: var(--text); }
+.fn-action { color: var(--subtle); }
+.fn-line { position: relative; width: 100%; height: 0; border-top: 1.5px solid var(--border-strong); }
+.fn-line::after {
+  content: ''; position: absolute; right: -1px; top: -5.5px; width: 0; height: 0;
+  border-left: 8px solid var(--border-strong); border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+}
+
+/* Reveal, one screen at a time in reading order (never two at once): the start card's border draws itself in, then
+   for each next screen the trunk down to its row (if it is not a first child), its arrow, then its card.
+   FlowPanel gives every screen its own step numbers: --tt (trunk), --ta (arrow), --tr (card ring). */
+.flow-chart { --fn-t: 0.45s; --fn-green: var(--green); }
+.fn-card { position: relative; }
+.fn-ring { position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); overflow: visible; pointer-events: none; }
+.fn-ring path {
+  fill: none; stroke: var(--fn-green); stroke-width: 1.5px; stroke-dasharray: 100; stroke-dashoffset: 100;
+  animation: fn-draw var(--fn-t) linear forwards;
+  animation-delay: calc(var(--tr, 0) * var(--fn-t));
+}
+@keyframes fn-draw { to { stroke-dashoffset: 0; } }
+.fn-branch:not(:last-child)::after {
+  z-index: 1; border-left-color: var(--fn-green); clip-path: inset(0 -2px 100% -2px);
+  animation: fn-down var(--fn-t) linear forwards;
+  animation-delay: calc(var(--tt, 0) * var(--fn-t));
+}
+@keyframes fn-down { to { clip-path: inset(0 -2px 0 -2px); } }
+.fn-fill {
+  position: absolute; z-index: 1; left: 0; right: 0; top: -1.5px; height: 0; border-top: 1.5px solid var(--fn-green);
+  clip-path: inset(-6px 100% -6px 0);
+  animation: fn-mask var(--fn-t) linear forwards;
+  animation-delay: calc(var(--ta, 0) * var(--fn-t));
+}
+.fn-fill::after {
+  content: ''; position: absolute; right: -1px; top: -5.5px; width: 0; height: 0;
+  border-left: 8px solid var(--fn-green); border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+}
+@keyframes fn-mask { to { clip-path: inset(-6px -2px -6px 0); } }
+@media (prefers-reduced-motion: reduce) {
+  .fn-ring path, .fn-fill, .fn-branch::after { animation: none !important; }
+  .fn-ring path { stroke-dashoffset: 0; }
+  .fn-fill, .fn-branch::after { clip-path: none; }
+}
+
+/* Note beside a card title, e.g. "Jira API and Figma API are recommended" on Details / Data. */
+.card-note { min-width: 0; font-size: 0.76rem; color: var(--subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Text for screen readers only */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

@@ -5,6 +5,9 @@ defineProps({
 
 // Issues marked "figma" are mistakes in the design file; they don't count against the site.
 const siteIssues = (c) => (c.issues || []).filter((i) => i.source !== 'figma').length;
+// Older issues often repeat the element in their text; it is only shown separately when the text does not name it.
+const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const issueNames = (issue) => norm(issue.issue).includes(norm(issue.element));
 
 const ASPECTS = {
   Typography: 'family, size, weight, line height, letter spacing, transform',
@@ -31,7 +34,10 @@ const ASPECTS = {
           <li v-for="(issue, i) in c.issues" :key="i" :class="{ 'figma-issue': issue.source === 'figma' }">
             <span v-if="issue.source === 'figma'" class="issue-figma" title="Looks like a mistake in the Figma file, not on the site. Raise it with the designer instead of changing code.">Fix in Figma</span>
             <span v-if="issue.section" class="issue-section">{{ issue.section }}</span>
+            <!-- Where to fix it: the element, and its live CSS selector to search for in code. -->
+            <strong v-if="issue.element && !issueNames(issue)" class="issue-element">{{ issue.element }}:</strong>
             {{ issue.issue }}
+            <code v-if="issue.selector" class="issue-selector" title="Live CSS selector of this element">{{ issue.selector }}</code>
           </li>
         </ul>
       </div>

@@ -28,7 +28,7 @@ const matched = computed(() => rows.value.filter((r) => r.match).length);
           <svg v-if="r.match" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7" /></svg>
           <svg v-else viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </span>
-        <span class="dm-el" role="cell">{{ r.element }}<small v-if="r.section || r.note">{{ [r.section, r.note].filter(Boolean).join(' · ') }}</small></span>
+        <span class="dm-el" role="cell">{{ r.element }}<small v-if="r.section || r.selector || r.note">{{ [r.section, r.selector, r.note].filter(Boolean).join(' · ') }}</small></span>
         <span class="dm-prop" role="cell">{{ r.property }}</span>
         <code role="cell" data-label="Figma">{{ r.figma }}</code>
         <code role="cell" data-label="Live" :class="{ off: !r.match }">{{ r.live }}</code>
