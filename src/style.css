@@ -49,6 +49,8 @@ p { margin: 0; }
   background: var(--sidebar); border-right: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
+.help-btn { color: var(--muted); }
+.help-btn:hover { color: var(--text); }
 .logo-word { display: inline-flex; align-items: center; font-weight: 900; font-size: 1.6rem; line-height: 1; letter-spacing: 0.02em; color: var(--text); }
 /* The O: code braces in the app's lime */
 .logo-o { height: 0.78em; width: auto; margin: 0 0.04em; color: var(--green); }

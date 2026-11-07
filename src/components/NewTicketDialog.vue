@@ -11,12 +11,16 @@ const input = ref(null);
 const url = ref('');
 const error = ref('');
 const busy = ref(false);
+const inline = ref(false);
 const key = computed(() => parseJiraKey(url.value));
 
-async function open() {
+// The tour opens it non-modal (`modal: false`): a modal dialog lives in the browser's top layer, where some
+// browsers close or hide it under the tour's own overlay.
+async function open({ modal = true } = {}) {
   url.value = '';
   error.value = '';
-  dialog.value.showModal();
+  inline.value = !modal;
+  modal ? dialog.value.showModal() : dialog.value.show();
   await nextTick();
   input.value?.focus();
 }
@@ -40,12 +44,22 @@ async function submit() {
   }
 }
 
-defineExpose({ open });
+// Tour helpers: type a link into the field one character at a time, then submit like the Add button.
+async function typeUrl(text, delay = 35) {
+  url.value = '';
+  for (const ch of text) {
+    url.value += ch;
+    await new Promise((r) => setTimeout(r, delay));
+  }
+}
+
+defineExpose({ open, close, typeUrl, submit });
 </script>
 
 <template>
-  <dialog ref="dialog" class="modal" @click.self="close">
-    <form class="modal-body" @submit.prevent="submit">
+  <Teleport to="body">
+  <dialog ref="dialog" class="modal" :class="{ 'modal-inline': inline }" @click.self="close">
+    <form class="modal-body" data-tour="ticket-modal" @submit.prevent="submit">
       <h3>New ticket</h3>
       <label class="field">
         <span>Jira link</span>
@@ -64,4 +78,10 @@ defineExpose({ open });
       </div>
     </form>
   </dialog>
+  </Teleport>
 </template>
+
+<style scoped>
+/* Non-modal (tour) version: centred like the modal, just above the tour's blur layer. */
+.modal-inline { position: fixed; inset: 0; margin: auto; height: fit-content; z-index: 1001; }
+</style>
