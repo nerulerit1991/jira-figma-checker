@@ -195,7 +195,7 @@ const skippedNotes = computed(() => {
         </div>
         <div class="flow-foot">
           <p class="meta">
-            <template v-if="busy">Clicking through {{ checked.length }} screen{{ checked.length === 1 ? '' : 's' }} at desktop, tablet and mobile…</template>
+            <template v-if="busy"><span class="retrieve-step run-inline">Clicking through {{ checked.length }} screen{{ checked.length === 1 ? '' : 's' }} at desktop, tablet and mobile…</span></template>
             <template v-else-if="pending">Mapped from Figma for the flow the ticket asks for. Check UI matches the checklist to these screens and hides any the ticket does not mention.</template>
             <template v-else-if="notInTicket">{{ notInTicket }} screen{{ notInTicket === 1 ? ' is' : 's are' }} marked “not in this ticket”: no Jira checklist item is about {{ notInTicket === 1 ? 'it' : 'them' }}, so Check UI skips {{ notInTicket === 1 ? 'it' : 'them' }}.</template>
           </p>

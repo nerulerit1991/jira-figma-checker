@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { api } from './api.js';
 import globalCasesCatalog from '../data/global-test-cases/cases.json';
 import McpStatus from './components/McpStatus.vue';
@@ -221,6 +221,29 @@ const jobs = ref({});
 const generatePending = ref({});
 const generatingTestsPending = computed(() => Boolean(generatePending.value[selectedKey.value]));
 const isBusy = (action, key = selectedKey.value) => Boolean(jobs.value[`${key}:${action}`]);
+
+// What Retrieve is doing right now ("Creating the checklist with AI…"), polled from the server while it runs.
+const retrieveStep = ref({ jira: null, figma: null });
+let stepTimer = null;
+watch(
+  () => [selectedKey.value, isBusy('jira'), isBusy('figma')],
+  ([key, jiraBusy, figmaBusy]) => {
+    clearInterval(stepTimer);
+    retrieveStep.value = { jira: null, figma: null };
+    if (!key || (!jiraBusy && !figmaBusy)) return;
+    const poll = async () => {
+      try {
+        const p = await api.progress(key);
+        if (selectedKey.value === key) retrieveStep.value = { jira: isBusy('jira') ? p.jira : null, figma: isBusy('figma') ? p.figma : null };
+      } catch {
+        // A missed poll just leaves the last message up.
+      }
+    };
+    poll();
+    stepTimer = setInterval(poll, 700);
+  },
+);
+onBeforeUnmount(() => clearInterval(stepTimer));
 const ticketBusy = (key) => Object.keys(jobs.value).some((id) => id.startsWith(`${key}:`));
 const anyBusy = computed(() => Object.keys(jobs.value).length > 0);
 // Check UI, tests and suggestions read the Details / Data section (links, sources, login), so it is locked while they run.
@@ -793,6 +816,8 @@ async function checkUi() {
 }
 
 // ---- Interaction flow ----
+// Names of the modals and pages the flow check opens, for the status line while it runs.
+const flowScreenNames = computed(() => checkedScreens(flow.value).map((sc) => sc.name).filter(Boolean).join(', '));
 const flowApiFrame = computed(() => figma.value?.via === 'api' && Boolean(figma.value?.nodeId));
 
 function checkFlow() {
@@ -1204,7 +1229,7 @@ onMounted(async () => {
               <!-- A disabled fieldset disables every input, radio and button inside it. -->
               <fieldset class="sources" :disabled="dataLocked" :title="dataLocked ? 'Locked while a check or test runs on these details' : null">
                 <div class="source" data-tour="jira-section">
-                  <span class="field-label">Jira section</span>
+                  <span class="field-label">Jira section<span v-if="isBusy('jira')" class="retrieve-step" aria-live="polite">{{ retrieveStep.jira || 'Retrieving…' }}</span></span>
                   <div class="via-row">
                   <div class="via-tabs" role="tablist" aria-label="Read Jira from">
                     <button
@@ -1246,7 +1271,7 @@ onMounted(async () => {
                 </div>
 
                 <div class="source" data-tour="figma-section">
-                  <span class="field-label">Figma section</span>
+                  <span class="field-label">Figma section<span v-if="isBusy('figma')" class="retrieve-step" aria-live="polite">{{ retrieveStep.figma || 'Retrieving…' }}</span></span>
                   <div class="via-radios" role="radiogroup" aria-label="Read Figma from">
                     <label v-for="tab in FIGMA_TABS" :key="tab.via" class="via-radio" :class="{ on: figmaVia === tab.via }">
                       <input
@@ -1393,7 +1418,8 @@ onMounted(async () => {
               </p>
               <p v-if="!jira" class="hint">Retrieve the Jira ticket first to build the checklist.</p>
               <p v-else-if="!pageUrl" class="hint">Enter the live page URL under Details / Data to enable play.</p>
-              <p v-else-if="isBusy('check')" class="hint">Rendering at {{ viewportList }}, then comparing with Jira and Figma…</p>
+              <p v-else-if="isBusy('check')" class="hint run-step" aria-live="polite"><span class="retrieve-step">Rendering at {{ viewportList }}, then comparing with Jira and Figma…</span></p>
+              <p v-else-if="isBusy('flow')" class="hint run-step" aria-live="polite"><span class="retrieve-step">Opening and checking {{ flowScreenNames || 'the linked modals and pages' }} against Figma…</span></p>
               <p v-if="check?.warning" class="warn-text">{{ check.warning }}</p>
 
               <template v-if="jira?.checklist?.length">
@@ -1585,7 +1611,7 @@ onMounted(async () => {
               </p>
               <p v-if="!jira" class="hint">Retrieve the Jira ticket first.</p>
               <p v-else-if="!pageUrl" class="hint">Enter the live page URL under Details / Data</p>
-              <p v-else-if="isBusy('improvements')" class="hint">Scanning the live page and reading the ticket for missing scenarios and loopholes…</p>
+              <p v-else-if="isBusy('improvements')" class="hint run-step" aria-live="polite"><span class="retrieve-step">Scanning the live page and reading the ticket for missing scenarios and loopholes…</span></p>
               <p class="tests-cost-note imp-note">AI looks past the acceptance criteria for missing scenarios, loopholes and improvements, explained in plain words. These are suggestions to discuss with the client or BA; they never change any score.</p>
               <div class="burst-host">
                 <TokenBurst :burst="burst" target="improvements" />

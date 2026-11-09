@@ -822,3 +822,13 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
 
 /* Text for screen readers only */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* Live Retrieve status beside the Jira / Figma section label. */
+.retrieve-step {
+  margin-left: 10px; text-transform: none; letter-spacing: 0; color: var(--accent, var(--text));
+  animation: retrieve-step-pulse 1.4s ease-in-out infinite;
+}
+@keyframes retrieve-step-pulse { 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { .retrieve-step { animation: none; } }
+.run-step .retrieve-step { margin-left: 0; }
+.run-inline { margin-left: 0; }

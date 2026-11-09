@@ -91,9 +91,14 @@ function requireKey(value) {
 // Prevents the same AI job from running twice at once (double clicks, two tabs).
 const inFlight = new Map();
 function once(id, fn) {
-  if (!inFlight.has(id)) inFlight.set(id, fn().finally(() => inFlight.delete(id)));
+  if (!inFlight.has(id)) inFlight.set(id, fn().finally(() => { inFlight.delete(id); progress.delete(id); }));
   return inFlight.get(id);
 }
+
+// What a running job is doing right now ("Creating checklist…"), keyed like once() ids, e.g. "jira:ABC-1".
+// The UI polls it while Retrieve runs and shows it beside the section label.
+const progress = new Map();
+const step = (id, text) => progress.set(id, text);
 
 // Generate, run, re-run failed and global run all write data/<KEY>/tests/, so only one runs per ticket at a time:
 // the same job started again joins the running one; a different one is refused instead of clobbering its files.
@@ -292,6 +297,11 @@ function viewportFor(frameWidth) {
   return VIEWPORTS.reduce((best, v) => (Math.abs(v.width - frameWidth) < Math.abs(best.width - frameWidth) ? v : best)).name;
 }
 
+app.get('/api/tickets/:key/progress', (req, res) => {
+  const key = req.params.key;
+  res.json({ jira: progress.get(`jira:${key}`) || null, figma: progress.get(`figma:${key}`) || null });
+});
+
 app.post('/api/tickets/:key/jira', async (req, res) => {
   const { key, jiraUrl } = await requireTicket(req.params.key);
   const cached = await readJson(key, 'jira');
@@ -301,7 +311,10 @@ app.post('/api/tickets/:key/jira', async (req, res) => {
   // ticket data is saved (a failed retrieve leaves everything as it was).
   const data = await once(`jira:${key}`, async () => {
     const jira = await retrieveJira();
-    if (req.body.reset) await resetTicketResults(key);
+    if (req.body.reset) {
+      step(`jira:${key}`, 'Clearing old tests and results…');
+      await resetTicketResults(key);
+    }
     return jira;
   });
   res.json({ cached: false, data, reset: Boolean(req.body.reset) });
@@ -312,7 +325,9 @@ app.post('/api/tickets/:key/jira', async (req, res) => {
       if (!jiraApiEnabled()) {
         throw httpError(400, 'Jira API is not set up. Add JIRA_EMAIL and JIRA_API_TOKEN to .env and restart the app, or use the Jira MCP tab.');
       }
+      step(`jira:${key}`, 'Retrieving the ticket from the Jira API…');
       const { acceptanceText, ...issue } = await fetchJiraIssue(jiraUrl, key);
+      step(`jira:${key}`, 'Creating the checklist with AI…');
       const { data, meta } = await runAgentJson({ ...jiraChecklistPrompt({ ...issue, acceptanceText }), track: { key, source: 'jira' } });
       return writeJson(key, 'jira', {
         ...issue,
@@ -326,8 +341,11 @@ app.post('/api/tickets/:key/jira', async (req, res) => {
         ai: meta,
       });
     }
+    step(`jira:${key}`, 'Connecting to Jira MCP…');
     const { server, otherServers } = await connectedServer('jira');
+    step(`jira:${key}`, 'Retrieving the ticket through Jira MCP…');
     const { data: issue, meta: retrievalMeta } = await runAgentJson({ ...jiraPrompt(jiraUrl, key, server), mcpServers: [server], otherServers, light: true, track: { key, source: 'jira' } });
+    step(`jira:${key}`, 'Creating the checklist with AI…');
     const { data: checklist, meta: checklistMeta } = await runAgentJson({
       ...jiraChecklistPrompt({
         key,
@@ -365,7 +383,9 @@ app.post('/api/tickets/:key/figma', async (req, res) => {
   // Desktop bridge: reads the frame selected in the Figma desktop app, so no link is needed.
   if (via === 'bridge') {
     const data = await once(`figma:${key}`, async () => {
+      step(`figma:${key}`, 'Connecting to the Figma desktop bridge…');
       const { server, otherServers } = await connectedServer('figmaBridge');
+      step(`figma:${key}`, 'Reading the selected frame from Figma desktop…');
       const { data, meta } = await runAgentJson({ ...figmaBridgePrompt(server), mcpServers: [server], otherServers, light: true, track: { key, source: 'figma' } });
       if (!data?.specs?.length && !data?.typography?.length) {
         throw httpError(502, `Figma desktop (bridge) returned no design data. ${String(data?.summary || '').slice(0, 200)} ` +
@@ -413,10 +433,13 @@ app.post('/api/tickets/:key/figma', async (req, res) => {
       const reused = Boolean(full);
       let savedPath = await fullFigmaLocation(fileKey);
       if (!full) {
+        step(`figma:${key}`, 'Downloading the Figma file from the Figma API…');
         const { file, version } = await fetchFigmaFile(fileKey);
+        step(`figma:${key}`, 'Saving the Figma file…');
         full = { fileKey, fileName: file.name, url: `https://www.figma.com/design/${fileKey}/`, fetchedAt: new Date().toISOString(), version, file };
         savedPath = await writeFullFigma(fileKey, full, { project: req.body.project, replace: req.body.overwrite === true });
       }
+      step(`figma:${key}`, 'Reading the linked frame…');
       const saved = await writeJson(key, 'figma', {
         ...frameFromFile(full, nodeId),
         url,
@@ -437,7 +460,9 @@ app.post('/api/tickets/:key/figma', async (req, res) => {
 
   // MCP: the selected agent's local Figma MCP, via AI.
   const data = await once(`figma:${key}`, async () => {
+    step(`figma:${key}`, 'Connecting to Figma MCP…');
     const { server, otherServers } = await connectedServer('figma');
+    step(`figma:${key}`, 'Reading the design through Figma MCP…');
     const { data, meta } = await runAgentJson({ ...figmaPrompt(figmaLink, server), mcpServers: [server], otherServers, light: true, track: { key, source: 'figma' } });
     // An empty result (e.g. the connector is rate-limited) must not replace design data that is already saved.
     if (!data?.specs?.length && !data?.typography?.length) {
