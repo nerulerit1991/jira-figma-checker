@@ -28,6 +28,7 @@ export const api = {
   deleteTicket: (key) => request(t(key), { method: 'DELETE' }),
   deleteAllTickets: () => request('/tickets', { method: 'DELETE' }),
   fetchJira: (key, force, via, reset = false) => request(`${t(key)}/jira`, { method: 'POST', body: { force, via, reset } }),
+  progress: (key) => request(`${t(key)}/progress`),
   fetchFigma: (key, url, body = {}) => request(`${t(key)}/figma`, { method: 'POST', body: { ...body, url } }),
   checkUi: (key, url) => request(`${t(key)}/check`, { method: 'POST', body: { url } }),
   recheckUi: (key, url) => request(`${t(key)}/check/recheck`, { method: 'POST', body: { url } }),

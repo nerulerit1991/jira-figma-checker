@@ -49,6 +49,8 @@ p { margin: 0; }
   background: var(--sidebar); border-right: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
+.help-btn { color: var(--muted); }
+.help-btn:hover { color: var(--text); }
 .logo-word { display: inline-flex; align-items: center; font-weight: 900; font-size: 1.6rem; line-height: 1; letter-spacing: 0.02em; color: var(--text); }
 /* The O: code braces in the app's lime */
 .logo-o { height: 0.78em; width: auto; margin: 0 0.04em; color: var(--green); }
@@ -820,3 +822,13 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
 
 /* Text for screen readers only */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* Live Retrieve status beside the Jira / Figma section label. */
+.retrieve-step {
+  margin-left: 10px; text-transform: none; letter-spacing: 0; color: var(--accent, var(--text));
+  animation: retrieve-step-pulse 1.4s ease-in-out infinite;
+}
+@keyframes retrieve-step-pulse { 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { .retrieve-step { animation: none; } }
+.run-step .retrieve-step { margin-left: 0; }
+.run-inline { margin-left: 0; }
