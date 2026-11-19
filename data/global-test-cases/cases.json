@@ -1,106 +1,116 @@
 {
   "version": 1,
-  "description": "Default checks run on every ticket's page, whether or not the acceptance criteria mention them. Keep page-specific acceptance criteria in each ticket's tests instead.",
+  "description": "Default checks run on every ticket's page, whether or not the acceptance criteria mention them. Keep page-specific acceptance criteria in each ticket's tests instead. Listed from highest to lowest priority: security, page load and API, data and forms, navigation, layout, then accessibility.",
   "cases": [
     {
       "id": "G01",
-      "title": "Page loads without browser or first-party request errors",
-      "covers": "Successful page response, uncaught JavaScript errors, and failed same-origin resources."
+      "title": "No secret keys are exposed to the browser",
+      "covers": "The page HTML, its scripts and its own API responses contain no secret keys or tokens (AWS, Stripe secret, GitHub, Slack, OpenAI, private keys, client secrets), and /.env and /.git/config are not downloadable. Publishable keys meant for the browser are allowed. Found values are masked in the report."
     },
     {
       "id": "G02",
-      "title": "JS, CSS, font and image assets load",
-      "covers": "No failed scripts, stylesheets, fonts or images, and no broken images on the page."
-    },
-    {
-      "id": "G03",
-      "title": "Third-party scripts load without errors",
-      "covers": "If applicable: third-party scripts and plugins load and do not throw errors."
-    },
-    {
-      "id": "G04",
-      "title": "API requests succeed, are fast and are not duplicated",
-      "covers": "If applicable: no failed, CORS-blocked or over-10s API requests, and no duplicate GET requests on load."
-    },
-    {
-      "id": "G05",
-      "title": "API responses are valid JSON with correct data types",
-      "covers": "If applicable: JSON parses, numeric fields are numbers (not strings), and record ids are not null."
-    },
-    {
-      "id": "G06",
-      "title": "API errors and slow responses show a clear state",
-      "covers": "If applicable: when data requests are slowed, a loading indicator shows; when they return 500, an error message shows with no uncaught errors or endless spinner. Responses are changed in the browser only; writes are blocked."
-    },
-    {
-      "id": "G07",
       "title": "Protected pages require a session and handle an expired one",
       "covers": "If applicable (logged-in runs only): without a session the page redirects to login or denies access and APIs return no records; a 401 from the API leads to login or a session-expired message. Writes are blocked."
     },
     {
+      "id": "G03",
+      "title": "Page loads without browser or first-party request errors",
+      "covers": "Successful page response, uncaught JavaScript errors, and failed same-origin resources."
+    },
+    {
+      "id": "G04",
+      "title": "JS, CSS, font and image assets load",
+      "covers": "No failed scripts, stylesheets, fonts or images, and no broken images on the page."
+    },
+    {
+      "id": "G05",
+      "title": "Third-party scripts load without errors",
+      "covers": "If applicable: third-party scripts and plugins load and do not throw errors."
+    },
+    {
+      "id": "G06",
+      "title": "API requests succeed, are fast and are not duplicated",
+      "covers": "If applicable: no failed, CORS-blocked or over-10s API requests, and no duplicate GET requests on load."
+    },
+    {
+      "id": "G07",
+      "title": "API responses are valid JSON with correct data types",
+      "covers": "If applicable: JSON parses, numeric fields are numbers (not strings), and record ids are not null."
+    },
+    {
       "id": "G08",
-      "title": "Shared navigation links have working destinations",
-      "covers": "Visible navigation links have destinations and same-origin pages respond successfully."
+      "title": "API errors and slow responses show a clear state",
+      "covers": "If applicable: when data requests are slowed, a loading indicator shows; when they return 500, an error message shows with no uncaught errors or endless spinner. Responses are changed in the browser only; writes are blocked."
     },
     {
       "id": "G09",
-      "title": "Visible links and controls are usable",
-      "covers": "Interactive controls have accessible names, links have destinations, and keyboard focus can reach controls."
-    },
-    {
-      "id": "G10",
-      "title": "Semantic elements and heading hierarchy",
-      "covers": "Clickable elements are real <button>/<a> (not clickable <div>), one <h1>, and the first heading is the <h1>."
-    },
-    {
-      "id": "G11",
-      "title": "Basic page accessibility checks pass",
-      "covers": "Images have alt attributes and headings follow a sensible order."
-    },
-    {
-      "id": "G12",
-      "title": "Keyboard focus is visible and dialogs close with Escape",
-      "covers": "Tab moves focus with a visible focus indicator; an open dialog closes with Escape."
-    },
-    {
-      "id": "G13",
-      "title": "Page has no horizontal overflow at common viewport sizes",
-      "covers": "The page remains within the viewport at desktop, tablet, and mobile widths."
-    },
-    {
-      "id": "G14",
-      "title": "Text is not cut off and expected UI renders",
-      "covers": "No clipped text without an ellipsis, no unrendered values (undefined, NaN, {{ }}), and loading indicators go away after load."
-    },
-    {
-      "id": "G15",
-      "title": "Forms show validation without submitting real data",
-      "covers": "When a form exists, submitting invalid or empty required fields shows validation and does not create records or send messages."
-    },
-    {
-      "id": "G16",
       "title": "Async form actions do not submit twice on a rapid double click",
       "covers": "For an available POST form, rapid repeat clicks do not launch duplicate writes. Test requests are blocked before reaching the server."
     },
     {
-      "id": "G17",
-      "title": "Date and date-range fields reject invalid values",
-      "covers": "If applicable: leap-day and month-end dates are accepted, a start date later than the end date is rejected, and no \"Invalid Date\" shows."
+      "id": "G10",
+      "title": "Forms show validation without submitting real data",
+      "covers": "When a form exists, submitting invalid or empty required fields shows validation and does not create records or send messages."
     },
     {
-      "id": "G18",
+      "id": "G11",
       "title": "Email and phone fields reject invalid formats",
       "covers": "If applicable: invalid email and phone values are flagged. Writes are blocked in the browser."
     },
     {
-      "id": "G19",
+      "id": "G12",
+      "title": "Date and date-range fields reject invalid values",
+      "covers": "If applicable: leap-day and month-end dates are accepted, a start date later than the end date is rejected, and no \"Invalid Date\" shows."
+    },
+    {
+      "id": "G13",
+      "title": "Search, filter, sort and pagination update the list",
+      "covers": "If applicable: sorting keeps the same data in a new order, a no-match search narrows the list, and the next page shows different rows. Writes are blocked."
+    },
+    {
+      "id": "G14",
       "title": "Tables show a no-data state when their list is empty",
       "covers": "When the page has a table, its list requests are emptied in the browser only (no server data is changed) and the table must show an empty-state message."
     },
     {
+      "id": "G15",
+      "title": "Shared navigation links have working destinations",
+      "covers": "Visible navigation links have destinations and same-origin pages respond successfully."
+    },
+    {
+      "id": "G16",
+      "title": "External links open in a new tab",
+      "covers": "If applicable: visible links to another domain have target=\"_blank\", so the user stays on the site. Links are read only, never clicked."
+    },
+    {
+      "id": "G17",
+      "title": "Text is not cut off and expected UI renders",
+      "covers": "No clipped text without an ellipsis, no unrendered values (undefined, NaN, {{ }}), and loading indicators go away after load."
+    },
+    {
+      "id": "G18",
+      "title": "Page has no horizontal overflow at common viewport sizes",
+      "covers": "The page remains within the viewport at desktop, tablet, and mobile widths."
+    },
+    {
+      "id": "G19",
+      "title": "Visible links and controls are usable",
+      "covers": "Interactive controls have accessible names, links have destinations, and keyboard focus can reach controls."
+    },
+    {
       "id": "G20",
-      "title": "Search, filter, sort and pagination update the list",
-      "covers": "If applicable: sorting keeps the same data in a new order, a no-match search narrows the list, and the next page shows different rows. Writes are blocked."
+      "title": "Keyboard focus is visible and dialogs close with Escape",
+      "covers": "Tab moves focus with a visible focus indicator; an open dialog closes with Escape."
+    },
+    {
+      "id": "G21",
+      "title": "Basic page accessibility checks pass",
+      "covers": "Images have alt attributes and headings follow a sensible order."
+    },
+    {
+      "id": "G22",
+      "title": "Semantic elements and heading hierarchy",
+      "covers": "Clickable elements are real <button>/<a> (not clickable <div>), one <h1>, and the first heading is the <h1>."
     }
   ]
 }

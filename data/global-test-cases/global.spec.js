@@ -69,130 +69,57 @@ async function apiGetsOnLoad(page, baseURL) {
   return gets;
 }
 
-// ---- Default checks, sorted by area: load & assets, API & session, navigation & accessibility, layout, forms, lists.
+// Formats of keys that must never reach the browser. Publishable keys meant for it (Stripe pk_, Google AIza…) are not listed.
+const secretPatterns = [
+  ['AWS access key', /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g],
+  ['private key', /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g],
+  ['Stripe secret key', /\b(?:sk|rk)_live_[0-9a-zA-Z]{20,}\b/g],
+  ['GitHub token', /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})\b/g],
+  ['Slack token', /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g],
+  ['Slack webhook', /hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]{20,}/g],
+  ['OpenAI / Anthropic key', /\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{32,}\b/g],
+  ['SendGrid key', /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b/g],
+  ['Google OAuth client secret', /\bGOCSPX-[A-Za-z0-9_-]{28}\b/g],
+  ['secret in config', /["']?\b(?:client_?secret|api_?secret|secret_?key|aws_secret_access_key|db_?password|database_?password)["']?\s*[:=]\s*["'][^"'\s]{12,}["']/gi],
+];
+/** Shows only the start of a found value, so the report never stores the whole key. */
+const maskSecret = (value) => `${value.slice(0, 6)}… (${value.length} chars)`;
 
-test('[G01] page loads without browser or first-party request errors', async ({ page, baseURL }) => {
-  const pageErrors = [];
-  const badResponses = [];
-  page.on('pageerror', (error) => pageErrors.push(error.message));
-  page.on('response', (response) => {
-    try {
-      if (new URL(response.url()).origin === new URL(page.url()).origin && response.status() >= 400) {
-        badResponses.push(`${response.status()} ${response.url()}`);
-      }
-    } catch { /* Ignore non-HTTP responses. */ }
-  });
-  const response = await page.goto(baseURL);
-  expect(response?.status() ?? 0).toBeLessThan(400);
-  expect(pageErrors).toEqual([]);
-  expect(badResponses).toEqual([]);
-});
+// ---- Default checks, highest priority first: security, load & API, data & forms, navigation, layout, accessibility.
 
-test('[G02] JS, CSS, font and image assets load', async ({ page, baseURL }) => {
-  const failed = [];
-  const kinds = ['script', 'stylesheet', 'font', 'image'];
-  page.on('requestfailed', (r) => { if (kinds.includes(r.resourceType()) && !/ERR_ABORTED/.test(r.failure()?.errorText || '')) failed.push(`${r.resourceType()} ${r.url()}`); });
-  page.on('response', (res) => { if (kinds.includes(res.request().resourceType()) && res.status() >= 400) failed.push(`${res.status()} ${res.request().resourceType()} ${res.url()}`); });
-  await page.goto(baseURL);
-  await settle(page);
-  const broken = await page.locator('img').evaluateAll((imgs) => imgs
-    .filter((img) => img.checkVisibility?.() && img.complete && img.currentSrc && img.naturalWidth === 0).map((img) => `broken image ${img.currentSrc}`));
-  expect([...failed, ...broken], 'assets failed to load').toEqual([]);
-});
-
-test('[G03] third-party scripts load without errors', async ({ page, baseURL }) => {
-  const site = (url) => new URL(url).hostname.split('.').slice(-2).join('.');
-  const thirdParty = [];
-  const failed = [];
-  page.on('request', (r) => { try { if (r.resourceType() === 'script' && site(r.url()) !== site(baseURL)) thirdParty.push(r.url()); } catch { /* non-HTTP */ } });
-  page.on('requestfailed', (r) => { if (thirdParty.includes(r.url())) failed.push(`${r.url()} — ${r.failure()?.errorText}`); });
-  page.on('response', (res) => { if (thirdParty.includes(res.url()) && res.status() >= 400) failed.push(`${res.status()} ${res.url()}`); });
-  const errors = [];
-  page.on('pageerror', (e) => { if (thirdParty.some((u) => (e.stack || '').includes(new URL(u).hostname))) errors.push(e.message); });
-  await page.goto(baseURL);
-  await settle(page);
-  test.skip(!thirdParty.length, 'Not applicable: no third-party scripts or plugins on this page');
-  expect(failed, 'third-party scripts failed to load').toEqual([]);
-  expect(errors, 'third-party scripts threw errors').toEqual([]);
-});
-
-test('[G04] API requests succeed, are fast and are not duplicated', async ({ page, baseURL }) => {
-  const consoleCors = [];
-  page.on('console', (m) => { if (m.type() === 'error' && /CORS|Access-Control-Allow-Origin/i.test(m.text())) consoleCors.push(m.text().slice(0, 160)); });
-  const api = await collectApi(page, baseURL);
-  test.skip(!api.calls.length && !api.failed.length, 'Not applicable: the page makes no API requests');
-  expect(api.failed, 'API requests failed (error status, network or CORS failure)').toEqual([]);
-  expect(consoleCors, 'CORS errors').toEqual([]);
-  expect(api.slow, 'API requests took over 10s (timeout risk)').toEqual([]);
-  const counts = api.calls.filter((c) => c.startsWith('GET ')).reduce((m, c) => m.set(c, (m.get(c) || 0) + 1), new Map());
-  expect([...counts].filter(([, n]) => n > 1).map(([c, n]) => `${c} ×${n}`), 'the same request was sent more than once on load').toEqual([]);
-});
-
-test('[G05] API responses are valid JSON with correct data types', async ({ page, baseURL }) => {
-  const api = await collectApi(page, baseURL);
-  test.skip(!api.bodies.length, 'Not applicable: the page loads no JSON API data');
-  expect(api.bodies.filter((b) => b.invalid).map((b) => b.url), 'responses labeled JSON must parse as JSON').toEqual([]);
-  // Numeric fields sent as strings ("total": "12") and null/empty values in fields that identify a record.
-  const wrongTypes = [];
-  const walk = (value, path) => {
-    if (Array.isArray(value)) return value.slice(0, 20).forEach((v, i) => walk(v, `${path}[${i}]`));
-    if (!value || typeof value !== 'object') return;
-    for (const [k, v] of Object.entries(value)) {
-      if (/^(id|count|total|.*_?count|.*_?total|amount|price|qty|quantity|page|per_?page|page_?size|limit|offset)$/i.test(k) && typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v)) wrongTypes.push(`${path}.${k} = "${v}" (number sent as string)`);
-      if (/^(id|uuid)$/i.test(k) && (v === null || v === '')) wrongTypes.push(`${path}.${k} is ${JSON.stringify(v)}`);
-      walk(v, `${path}.${k}`);
+test('[G01] no secret keys are exposed to the browser', async ({ page, request, baseURL }) => {
+  // Read only: scans what the page already downloads, plus two GETs on the same site. Nothing is written.
+  const bodies = [];
+  page.on('response', (res) => {
+    const type = res.request().resourceType();
+    if (type === 'script' || (['document', 'fetch', 'xhr'].includes(type) && sameSite(res.url(), baseURL))) {
+      bodies.push(res.text().then((text) => ({ url: res.url(), text: text.slice(0, 5_000_000) })).catch(() => null));
     }
-  };
-  for (const b of api.bodies.filter((x) => !x.invalid)) walk(b.body, new URL(b.url).pathname);
-  expect(wrongTypes.slice(0, 10), 'API fields have unexpected types or null identifiers').toEqual([]);
+  });
+  await page.goto(baseURL);
+  await settle(page);
+  const sources = (await Promise.all(bodies)).filter(Boolean);
+  sources.push({ url: `${page.url()} (rendered HTML)`, text: await page.content() });
+
+  const found = new Set();
+  for (const { url, text } of sources) {
+    for (const [kind, pattern] of secretPatterns) {
+      for (const match of text.matchAll(pattern)) found.add(`${kind}: ${maskSecret(match[0])} in ${url}`);
+    }
+  }
+
+  // Server files that hold keys: a site that falls back to its HTML page for unknown paths is not a leak.
+  const origin = new URL(page.url()).origin;
+  for (const [file, looksReal] of [['/.env', /^\s*[A-Z][A-Z0-9_]*\s*=/m], ['/.git/config', /^\s*\[core\]/m]]) {
+    const res = await request.get(origin + file, { maxRedirects: 0 }).catch(() => null);
+    const text = res && res.status() === 200 ? await res.text().catch(() => '') : '';
+    if (text && !/<html|<!doctype/i.test(text) && looksReal.test(text)) found.add(`${origin}${file} can be downloaded`);
+  }
+
+  expect([...found], 'secret keys or key files should not be reachable from the browser').toEqual([]);
 });
 
-test('[G06] API errors and slow responses show a clear state', async ({ page, baseURL }) => {
-  test.setTimeout(60_000);
-  const gets = await apiGetsOnLoad(page, baseURL);
-  test.skip(!gets.size, 'Not applicable: the page loads no data from an API');
-
-  // 1) Slow API: while data is delayed, the user should see a loading indicator, not a blank or frozen page.
-  await page.unrouteAll({ behavior: 'ignoreErrors' });
-  await page.route('**/*', async (route) => {
-    const r = route.request();
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(r.method())) return route.fulfill({ status: 503, body: 'Blocked by the global test.' });
-    if (!isApiGet(r, baseURL)) return route.continue();
-    await new Promise((res) => setTimeout(res, 5_000));
-    return route.continue().catch(() => {});
-  });
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await expect
-    .poll(async () => (await page.locator(loadersSel).count()) + (await page.getByText(/loading|please wait/i).locator('visible=true').count()),
-      { message: 'a loading indicator should show while API data is slow', timeout: 4_000 })
-    .toBeGreaterThan(0);
-  await settle(page);
-
-  // 2) API error: a 500 on the data requests should show an error message, not crash, hang or leave a blank page.
-  const pageErrors = [];
-  page.on('pageerror', (e) => pageErrors.push(e.message));
-  await page.unrouteAll({ behavior: 'ignoreErrors' });
-  let failed = 0;
-  await page.route('**/*', (route) => {
-    const r = route.request();
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(r.method())) return route.fulfill({ status: 503, body: 'Blocked by the global test.' });
-    if (!isApiGet(r, baseURL)) return route.continue();
-    failed++;
-    return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Simulated server error (global test)' }) });
-  });
-  await page.reload();
-  await settle(page);
-  expect(failed, 'the data requests were replaced with a 500 error').toBeGreaterThan(0);
-  expect(pageErrors, 'a failed API request should not cause uncaught JavaScript errors').toEqual([]);
-  await expect.poll(() => page.locator(loadersSel).count(), { message: 'loading indicators should stop after an API error', timeout: 10_000 }).toBe(0);
-  await expect
-    .poll(() => page.getByText(errorText).locator('visible=true').count()
-      .then(async (n) => n + await page.locator('[role="alert"]:visible, .toast:visible, .error:visible').count()),
-      { message: 'an API error should show a message to the user (e.g. "Something went wrong, try again")', timeout: 10_000 })
-    .toBeGreaterThan(0);
-});
-
-test('[G07] protected pages require a session and handle an expired one', async ({ page, browser, baseURL }) => {
+test('[G02] protected pages require a session and handle an expired one', async ({ page, browser, baseURL }) => {
   // Applies only to logged-in runs (STORAGE_STATE set). Public pages run without one and skip.
   test.skip(!process.env.STORAGE_STATE, 'Not applicable: this page runs without a login session');
   const gets = await apiGetsOnLoad(page, baseURL);
@@ -240,123 +167,128 @@ test('[G07] protected pages require a session and handle an expired one', async 
     .toBe(true);
 });
 
-test('[G08] shared navigation links have working destinations', async ({ page, request, baseURL }) => {
-  await page.goto(baseURL);
-  const links = page.locator('nav a:visible, header a:visible');
-  const hrefs = await links.evaluateAll((items) => items.map((item) => item.getAttribute('href')).filter(Boolean));
-  const origin = new URL(page.url()).origin;
-  for (const href of hrefs) {
-    const destination = new URL(href, page.url());
-    if (destination.origin !== origin || destination.hash && destination.pathname === new URL(page.url()).pathname) continue;
-    const response = await request.get(destination.toString());
-    expect(response.status(), `navigation destination ${destination}`).toBeLessThan(400);
-  }
+test('[G03] page loads without browser or first-party request errors', async ({ page, baseURL }) => {
+  const pageErrors = [];
+  const badResponses = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('response', (response) => {
+    try {
+      if (new URL(response.url()).origin === new URL(page.url()).origin && response.status() >= 400) {
+        badResponses.push(`${response.status()} ${response.url()}`);
+      }
+    } catch { /* Ignore non-HTTP responses. */ }
+  });
+  const response = await page.goto(baseURL);
+  expect(response?.status() ?? 0).toBeLessThan(400);
+  expect(pageErrors).toEqual([]);
+  expect(badResponses).toEqual([]);
 });
 
-test('[G09] visible links and controls have names and keyboard access', async ({ page, baseURL }) => {
-  await page.goto(baseURL);
-  const links = page.locator('a:visible');
-  for (let i = 0; i < await links.count(); i++) {
-    expect((await links.nth(i).getAttribute('href'))?.trim(), `link ${i + 1} needs a destination`).toBeTruthy();
-  }
-  const controls = page.locator('button:visible, [role="button"]:visible, input:not([type="hidden"]):visible, select:visible, textarea:visible');
-  for (let i = 0; i < await controls.count(); i++) {
-    await expect(controls.nth(i), `control ${i + 1} needs an accessible name`).toHaveAccessibleName(/\S/);
-  }
-  if (await links.count() + await controls.count()) {
-    await page.keyboard.press('Tab');
-    expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
-  }
-});
-
-test('[G10] semantic elements and heading hierarchy', async ({ page, baseURL }) => {
+test('[G04] JS, CSS, font and image assets load', async ({ page, baseURL }) => {
+  const failed = [];
+  const kinds = ['script', 'stylesheet', 'font', 'image'];
+  page.on('requestfailed', (r) => { if (kinds.includes(r.resourceType()) && !/ERR_ABORTED/.test(r.failure()?.errorText || '')) failed.push(`${r.resourceType()} ${r.url()}`); });
+  page.on('response', (res) => { if (kinds.includes(res.request().resourceType()) && res.status() >= 400) failed.push(`${res.status()} ${res.request().resourceType()} ${res.url()}`); });
   await page.goto(baseURL);
   await settle(page);
-  // A clickable div/span with no role, tabindex or native control inside cannot be reached or used by keyboard.
-  const fakeButtons = await page.evaluate(() => [...document.querySelectorAll('div, span, li, img, i, svg')].filter((el) => {
-    if (!el.checkVisibility?.() || el.closest('a, button, label, summary, [role], [tabindex]')) return false;
-    if (el.querySelector('a, button, input, select, textarea, [role="button"], [tabindex]')) return false;
-    return el.hasAttribute('onclick') || getComputedStyle(el).cursor === 'pointer';
-  }).slice(0, 5).map((el) => `<${el.tagName.toLowerCase()} class="${el.className?.baseVal ?? el.className}"> ${el.textContent.trim().slice(0, 40)}`));
-  expect(fakeButtons, 'clickable elements should be <button>/<a> (or have role and tabindex)').toEqual([]);
-  const h1 = await page.locator('h1:visible').count();
-  expect(h1, 'the page should have exactly one visible <h1>').toBe(1);
-  const first = await page.locator('h1:visible, h2:visible, h3:visible, h4:visible, h5:visible, h6:visible').first().evaluate((el) => el.tagName).catch(() => null);
-  expect(first, 'the first heading should be the <h1>').toBe('H1');
+  const broken = await page.locator('img').evaluateAll((imgs) => imgs
+    .filter((img) => img.checkVisibility?.() && img.complete && img.currentSrc && img.naturalWidth === 0).map((img) => `broken image ${img.currentSrc}`));
+  expect([...failed, ...broken], 'assets failed to load').toEqual([]);
 });
 
-test('[G11] images and headings meet basic accessibility checks', async ({ page, baseURL }) => {
-  await page.goto(baseURL);
-  const missingAlt = await page.locator('img:not([alt]):not([aria-hidden="true"])').count();
-  expect(missingAlt, 'images need an alt attribute or must be marked decorative').toBe(0);
-  const levels = await page.locator('h1, h2, h3, h4, h5, h6').evaluateAll((items) => items.map((item) => Number(item.tagName.slice(1))));
-  for (let i = 1; i < levels.length; i++) expect(levels[i] - levels[i - 1], 'heading levels should not skip').toBeLessThanOrEqual(1);
-});
-
-test('[G12] keyboard focus is visible and dialogs close with Escape', async ({ page, baseURL }) => {
+test('[G05] third-party scripts load without errors', async ({ page, baseURL }) => {
+  const site = (url) => new URL(url).hostname.split('.').slice(-2).join('.');
+  const thirdParty = [];
+  const failed = [];
+  page.on('request', (r) => { try { if (r.resourceType() === 'script' && site(r.url()) !== site(baseURL)) thirdParty.push(r.url()); } catch { /* non-HTTP */ } });
+  page.on('requestfailed', (r) => { if (thirdParty.includes(r.url())) failed.push(`${r.url()} — ${r.failure()?.errorText}`); });
+  page.on('response', (res) => { if (thirdParty.includes(res.url()) && res.status() >= 400) failed.push(`${res.status()} ${res.url()}`); });
+  const errors = [];
+  page.on('pageerror', (e) => { if (thirdParty.some((u) => (e.stack || '').includes(new URL(u).hostname))) errors.push(e.message); });
   await page.goto(baseURL);
   await settle(page);
-  const focusables = page.locator('a[href]:visible, button:visible:enabled, input:not([type="hidden"]):visible:enabled, select:visible:enabled, textarea:visible:enabled, [tabindex]:not([tabindex="-1"]):visible');
-  test.skip(!(await focusables.count()), 'Not applicable: no focusable controls on this page');
-  const unstyled = [];
-  for (let i = 0; i < Math.min(10, await focusables.count()); i++) {
-    await page.keyboard.press('Tab');
-    const info = await page.evaluate(() => {
-      const el = document.activeElement;
-      if (!el || el === document.body) return null;
-      const s = getComputedStyle(el);
-      const ring = (s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0) || (s.boxShadow && s.boxShadow !== 'none');
-      return { ring, name: `${el.tagName.toLowerCase()} ${(el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 30)}` };
-    });
-    if (info && !info.ring) unstyled.push(info.name);
-  }
-  expect(unstyled, 'keyboard focus needs a visible indicator (outline or box-shadow)').toEqual([]);
-  const dialog = page.locator('dialog[open], [role="dialog"]:visible, [aria-modal="true"]:visible').first();
-  if (await dialog.count()) {
-    await page.keyboard.press('Escape');
-    await expect(dialog, 'an open dialog should close with Escape').toBeHidden();
-  }
+  test.skip(!thirdParty.length, 'Not applicable: no third-party scripts or plugins on this page');
+  expect(failed, 'third-party scripts failed to load').toEqual([]);
+  expect(errors, 'third-party scripts threw errors').toEqual([]);
 });
 
-test('[G13] page has no horizontal overflow at common viewport sizes', async ({ page, baseURL }) => {
-  await page.goto(baseURL);
-  for (const width of [1440, 768, 375]) {
-    await page.setViewportSize({ width, height: 900 });
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-    expect(overflow, `page overflows at ${width}px`).toBeLessThanOrEqual(1);
-  }
+test('[G06] API requests succeed, are fast and are not duplicated', async ({ page, baseURL }) => {
+  const consoleCors = [];
+  page.on('console', (m) => { if (m.type() === 'error' && /CORS|Access-Control-Allow-Origin/i.test(m.text())) consoleCors.push(m.text().slice(0, 160)); });
+  const api = await collectApi(page, baseURL);
+  test.skip(!api.calls.length && !api.failed.length, 'Not applicable: the page makes no API requests');
+  expect(api.failed, 'API requests failed (error status, network or CORS failure)').toEqual([]);
+  expect(consoleCors, 'CORS errors').toEqual([]);
+  expect(api.slow, 'API requests took over 10s (timeout risk)').toEqual([]);
+  const counts = api.calls.filter((c) => c.startsWith('GET ')).reduce((m, c) => m.set(c, (m.get(c) || 0) + 1), new Map());
+  expect([...counts].filter(([, n]) => n > 1).map(([c, n]) => `${c} ×${n}`), 'the same request was sent more than once on load').toEqual([]);
 });
 
-test('[G14] text is not cut off and expected UI renders', async ({ page, baseURL }) => {
-  await page.goto(baseURL);
+test('[G07] API responses are valid JSON with correct data types', async ({ page, baseURL }) => {
+  const api = await collectApi(page, baseURL);
+  test.skip(!api.bodies.length, 'Not applicable: the page loads no JSON API data');
+  expect(api.bodies.filter((b) => b.invalid).map((b) => b.url), 'responses labeled JSON must parse as JSON').toEqual([]);
+  // Numeric fields sent as strings ("total": "12") and null/empty values in fields that identify a record.
+  const wrongTypes = [];
+  const walk = (value, path) => {
+    if (Array.isArray(value)) return value.slice(0, 20).forEach((v, i) => walk(v, `${path}[${i}]`));
+    if (!value || typeof value !== 'object') return;
+    for (const [k, v] of Object.entries(value)) {
+      if (/^(id|count|total|.*_?count|.*_?total|amount|price|qty|quantity|page|per_?page|page_?size|limit|offset)$/i.test(k) && typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v)) wrongTypes.push(`${path}.${k} = "${v}" (number sent as string)`);
+      if (/^(id|uuid)$/i.test(k) && (v === null || v === '')) wrongTypes.push(`${path}.${k} is ${JSON.stringify(v)}`);
+      walk(v, `${path}.${k}`);
+    }
+  };
+  for (const b of api.bodies.filter((x) => !x.invalid)) walk(b.body, new URL(b.url).pathname);
+  expect(wrongTypes.slice(0, 10), 'API fields have unexpected types or null identifiers').toEqual([]);
+});
+
+test('[G08] API errors and slow responses show a clear state', async ({ page, baseURL }) => {
+  test.setTimeout(60_000);
+  const gets = await apiGetsOnLoad(page, baseURL);
+  test.skip(!gets.size, 'Not applicable: the page loads no data from an API');
+
+  // 1) Slow API: while data is delayed, the user should see a loading indicator, not a blank or frozen page.
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+  await page.route('**/*', async (route) => {
+    const r = route.request();
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(r.method())) return route.fulfill({ status: 503, body: 'Blocked by the global test.' });
+    if (!isApiGet(r, baseURL)) return route.continue();
+    await new Promise((res) => setTimeout(res, 5_000));
+    return route.continue().catch(() => {});
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect
+    .poll(async () => (await page.locator(loadersSel).count()) + (await page.getByText(/loading|please wait/i).locator('visible=true').count()),
+      { message: 'a loading indicator should show while API data is slow', timeout: 4_000 })
+    .toBeGreaterThan(0);
   await settle(page);
-  // Clipped text with no ellipsis: overflow hidden/clip on a text element whose content is wider or taller than its box.
-  const clipped = await page.evaluate(() => [...document.querySelectorAll('body *')].filter((el) => {
-    if (!el.checkVisibility?.() || !el.childNodes.length || ![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) return false;
-    const s = getComputedStyle(el);
-    if (s.textOverflow === 'ellipsis' || parseInt(s.webkitLineClamp, 10) > 0) return false;
-    const hidesX = /hidden|clip/.test(s.overflowX) && el.scrollWidth > el.clientWidth + 1;
-    const hidesY = /hidden|clip/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 2;
-    return hidesX || hidesY;
-  }).slice(0, 5).map((el) => el.textContent.trim().slice(0, 50)));
-  expect(clipped, 'text should not be cut off without an ellipsis').toEqual([]);
-  const text = await page.locator('body').innerText();
-  expect(text.trim().length, 'the page should render visible content').toBeGreaterThan(0);
-  expect(text.match(/\{\{.*?\}\}|\bundefined\b|\bNaN\b|\[object Object\]|Invalid Date/g) ?? [], 'unrendered values or template tags show on the page').toEqual([]);
-  // Loading indicators must go away once the page has loaded.
-  const loaders = page.locator('[aria-busy="true"]:visible, [role="progressbar"]:visible, .spinner:visible, .loading:visible, .skeleton:visible');
-  await expect.poll(() => loaders.count(), { message: 'loading indicators should disappear after load', timeout: 10_000 }).toBe(0);
+
+  // 2) API error: a 500 on the data requests should show an error message, not crash, hang or leave a blank page.
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+  let failed = 0;
+  await page.route('**/*', (route) => {
+    const r = route.request();
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(r.method())) return route.fulfill({ status: 503, body: 'Blocked by the global test.' });
+    if (!isApiGet(r, baseURL)) return route.continue();
+    failed++;
+    return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Simulated server error (global test)' }) });
+  });
+  await page.reload();
+  await settle(page);
+  expect(failed, 'the data requests were replaced with a 500 error').toBeGreaterThan(0);
+  expect(pageErrors, 'a failed API request should not cause uncaught JavaScript errors').toEqual([]);
+  await expect.poll(() => page.locator(loadersSel).count(), { message: 'loading indicators should stop after an API error', timeout: 10_000 }).toBe(0);
+  await expect
+    .poll(() => page.getByText(errorText).locator('visible=true').count()
+      .then(async (n) => n + await page.locator('[role="alert"]:visible, .toast:visible, .error:visible').count()),
+      { message: 'an API error should show a message to the user (e.g. "Something went wrong, try again")', timeout: 10_000 })
+    .toBeGreaterThan(0);
 });
 
-test('[G15] required form fields validate without submitting data', async ({ page, baseURL }) => {
-  await page.goto(baseURL);
-  const invalidEmptyFields = await page.locator('input[required], select[required], textarea[required]').evaluateAll((items) =>
-    items.filter((item) => !item.disabled && !String(item.value || '').trim() && item.checkValidity()).length,
-  );
-  expect(invalidEmptyFields, 'empty required fields should be rejected by browser validation').toBe(0);
-});
-
-test('[G16] async form actions do not submit twice on a rapid double click', async ({ page, baseURL }) => {
+test('[G09] async form actions do not submit twice on a rapid double click', async ({ page, baseURL }) => {
   await page.goto(baseURL);
   const form = page.locator('form[method="post" i]').first();
   if (!(await form.count())) return;
@@ -379,7 +311,33 @@ test('[G16] async form actions do not submit twice on a rapid double click', asy
   expect(submissions, 'rapid repeat clicks should not send duplicate writes').toBeLessThanOrEqual(1);
 });
 
-test('[G17] date and date-range fields reject invalid values', async ({ page, baseURL }) => {
+test('[G10] required form fields validate without submitting data', async ({ page, baseURL }) => {
+  await page.goto(baseURL);
+  const invalidEmptyFields = await page.locator('input[required], select[required], textarea[required]').evaluateAll((items) =>
+    items.filter((item) => !item.disabled && !String(item.value || '').trim() && item.checkValidity()).length,
+  );
+  expect(invalidEmptyFields, 'empty required fields should be rejected by browser validation').toBe(0);
+});
+
+test('[G11] email and phone fields reject invalid formats', async ({ page, baseURL }) => {
+  await page.goto(baseURL);
+  await settle(page);
+  const email = page.locator('input[type="email"]:visible:enabled, input[name*="email" i]:visible:enabled').first();
+  const phone = page.locator('input[type="tel"]:visible:enabled, input[name*="phone" i]:visible:enabled, input[name*="mobile" i]:visible:enabled').first();
+  test.skip(!(await email.count()) && !(await phone.count()), 'Not applicable: no email or phone fields on this page');
+  await blockWrites(page);
+  const rejects = async (field, value) => {
+    await field.fill(value);
+    await field.blur();
+    await page.waitForTimeout(300);
+    const invalid = await field.evaluate((el) => !el.checkValidity() || el.getAttribute('aria-invalid') === 'true');
+    return invalid || (await field.inputValue()) !== value; // input masks that strip letters also count
+  };
+  if (await email.count()) expect(await rejects(email, 'not-an-email'), 'email field should reject "not-an-email"').toBe(true);
+  if (await phone.count()) expect(await rejects(phone, 'abc-phone'), 'phone field should reject letters').toBe(true);
+});
+
+test('[G12] date and date-range fields reject invalid values', async ({ page, baseURL }) => {
   await page.goto(baseURL);
   await settle(page);
   const dates = page.locator('input[type="date"]:visible:enabled, input[type="datetime-local"]:visible:enabled');
@@ -410,25 +368,49 @@ test('[G17] date and date-range fields reject invalid values', async ({ page, ba
   expect(await page.getByText(/Invalid Date|NaN/).locator('visible=true').count(), 'dates should never render as "Invalid Date"/NaN').toBe(0);
 });
 
-test('[G18] email and phone fields reject invalid formats', async ({ page, baseURL }) => {
+test('[G13] search, filter, sort and pagination update the list', async ({ page, baseURL }) => {
   await page.goto(baseURL);
   await settle(page);
-  const email = page.locator('input[type="email"]:visible:enabled, input[name*="email" i]:visible:enabled').first();
-  const phone = page.locator('input[type="tel"]:visible:enabled, input[name*="phone" i]:visible:enabled, input[name*="mobile" i]:visible:enabled').first();
-  test.skip(!(await email.count()) && !(await phone.count()), 'Not applicable: no email or phone fields on this page');
+  const rowsSel = 'table tbody tr:visible, [role="row"]:has([role="cell"], [role="gridcell"]):visible, ul li:visible';
+  const rowsText = () => page.locator('table tbody tr:visible, [role="row"]:has([role="cell"], [role="gridcell"]):visible').allInnerTexts();
+  const search = page.locator('input[type="search"]:visible, input[placeholder*="search" i]:visible, input[aria-label*="search" i]:visible').first();
+  const filter = page.locator('select:visible:enabled, [aria-label*="filter" i]:visible').first();
+  const sort = page.locator('th[aria-sort]:visible, th:has(button):visible, [role="columnheader"][aria-sort]:visible').first();
+  const next = page.locator('[aria-label*="next" i]:visible:enabled, button:has-text("Next"):visible:enabled, a:has-text("Next"):visible, .pagination a:visible').first();
+  const present = { search: await search.count(), filter: await filter.count(), sort: await sort.count(), next: await next.count() };
+  test.skip(!Object.values(present).some(Boolean), 'Not applicable: no search, filter, sort or pagination on this page');
   await blockWrites(page);
-  const rejects = async (field, value) => {
-    await field.fill(value);
-    await field.blur();
-    await page.waitForTimeout(300);
-    const invalid = await field.evaluate((el) => !el.checkValidity() || el.getAttribute('aria-invalid') === 'true');
-    return invalid || (await field.inputValue()) !== value; // input masks that strip letters also count
-  };
-  if (await email.count()) expect(await rejects(email, 'not-an-email'), 'email field should reject "not-an-email"').toBe(true);
-  if (await phone.count()) expect(await rejects(phone, 'abc-phone'), 'phone field should reject letters').toBe(true);
+  const before = await rowsText();
+  test.skip(!before.length, 'Not applicable: the list has no rows to search, sort or page through');
+
+  if (present.sort) {
+    await sort.click();
+    await settle(page);
+    const after = await rowsText();
+    expect(after.length, 'sorting should keep the same rows').toBe(before.length);
+    expect([...after].sort(), 'sorting should not change the data, only its order').toEqual([...before].sort());
+    if (before.length > 1) expect(after.join('|') !== before.join('|') || (await sort.getAttribute('aria-sort')) != null, 'clicking a sortable header should change the order').toBe(true);
+  }
+  if (present.search) {
+    await search.fill('zzqx-no-match-9471');
+    await search.press('Enter').catch(() => {});
+    await settle(page);
+    await page.waitForTimeout(500);
+    expect((await rowsText()).length, 'a search with no match should leave fewer rows').toBeLessThan(before.length + (before.length ? 0 : 1));
+    await search.fill('');
+    await search.press('Enter').catch(() => {});
+    await settle(page);
+  }
+  if (present.next && !present.search) {
+    const firstRow = (await rowsText())[0];
+    await next.click();
+    await settle(page);
+    expect((await rowsText())[0], 'the next page should show different rows').not.toBe(firstRow);
+    expect(await page.locator(rowsSel).count(), 'the next page should not be empty').toBeGreaterThan(0);
+  }
 });
 
-test('[G19] tables show a no-data state when their list is empty', async ({ page, baseURL }) => {
+test('[G14] tables show a no-data state when their list is empty', async ({ page, baseURL }) => {
   const tables = 'table:visible, [role="table"]:visible, [role="grid"]:visible';
   // Same site, not just same origin: APIs often live on a sibling subdomain (app.example.com -> api.example.com).
   const site = (url) => new URL(url).hostname.split('.').slice(-2).join('.');
@@ -474,44 +456,125 @@ test('[G19] tables show a no-data state when their list is empty', async ({ page
     .toBeGreaterThan(messagesBefore);
 });
 
-test('[G20] search, filter, sort and pagination update the list', async ({ page, baseURL }) => {
+test('[G15] shared navigation links have working destinations', async ({ page, request, baseURL }) => {
+  await page.goto(baseURL);
+  const links = page.locator('nav a:visible, header a:visible');
+  const hrefs = await links.evaluateAll((items) => items.map((item) => item.getAttribute('href')).filter(Boolean));
+  const origin = new URL(page.url()).origin;
+  for (const href of hrefs) {
+    const destination = new URL(href, page.url());
+    if (destination.origin !== origin || destination.hash && destination.pathname === new URL(page.url()).pathname) continue;
+    const response = await request.get(destination.toString());
+    expect(response.status(), `navigation destination ${destination}`).toBeLessThan(400);
+  }
+});
+
+test('[G16] external links open in a new tab', async ({ page, baseURL }) => {
   await page.goto(baseURL);
   await settle(page);
-  const rowsSel = 'table tbody tr:visible, [role="row"]:has([role="cell"], [role="gridcell"]):visible, ul li:visible';
-  const rowsText = () => page.locator('table tbody tr:visible, [role="row"]:has([role="cell"], [role="gridcell"]):visible').allInnerTexts();
-  const search = page.locator('input[type="search"]:visible, input[placeholder*="search" i]:visible, input[aria-label*="search" i]:visible').first();
-  const filter = page.locator('select:visible:enabled, [aria-label*="filter" i]:visible').first();
-  const sort = page.locator('th[aria-sort]:visible, th:has(button):visible, [role="columnheader"][aria-sort]:visible').first();
-  const next = page.locator('[aria-label*="next" i]:visible:enabled, button:has-text("Next"):visible:enabled, a:has-text("Next"):visible, .pagination a:visible').first();
-  const present = { search: await search.count(), filter: await filter.count(), sort: await sort.count(), next: await next.count() };
-  test.skip(!Object.values(present).some(Boolean), 'Not applicable: no search, filter, sort or pagination on this page');
-  await blockWrites(page);
-  const before = await rowsText();
-  test.skip(!before.length, 'Not applicable: the list has no rows to search, sort or page through');
+  // Read only: links are inspected, never clicked, so no request goes to the other domain.
+  const links = await page.locator('a[href]:visible').evaluateAll((items) => items.map((a) => ({
+    href: a.href,
+    target: (a.getAttribute('target') || '').trim().toLowerCase(),
+    text: (a.innerText || a.getAttribute('aria-label') || a.title || '').trim().replace(/\s+/g, ' ').slice(0, 60),
+  })));
+  const external = links.filter((l) => /^https?:$/.test(new URL(l.href).protocol) && !sameSite(l.href, page.url()));
+  test.skip(!external.length, 'Not applicable: the page has no visible links to another domain');
+  const sameTab = external.filter((l) => l.target !== '_blank').map((l) => `"${l.text || '(no text)'}" → ${l.href}`);
+  expect(sameTab, 'links to another domain should open in a new tab (target="_blank")').toEqual([]);
+});
 
-  if (present.sort) {
-    await sort.click();
-    await settle(page);
-    const after = await rowsText();
-    expect(after.length, 'sorting should keep the same rows').toBe(before.length);
-    expect([...after].sort(), 'sorting should not change the data, only its order').toEqual([...before].sort());
-    if (before.length > 1) expect(after.join('|') !== before.join('|') || (await sort.getAttribute('aria-sort')) != null, 'clicking a sortable header should change the order').toBe(true);
+test('[G17] text is not cut off and expected UI renders', async ({ page, baseURL }) => {
+  await page.goto(baseURL);
+  await settle(page);
+  // Clipped text with no ellipsis: overflow hidden/clip on a text element whose content is wider or taller than its box.
+  const clipped = await page.evaluate(() => [...document.querySelectorAll('body *')].filter((el) => {
+    if (!el.checkVisibility?.() || !el.childNodes.length || ![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) return false;
+    const s = getComputedStyle(el);
+    if (s.textOverflow === 'ellipsis' || parseInt(s.webkitLineClamp, 10) > 0) return false;
+    const hidesX = /hidden|clip/.test(s.overflowX) && el.scrollWidth > el.clientWidth + 1;
+    const hidesY = /hidden|clip/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 2;
+    return hidesX || hidesY;
+  }).slice(0, 5).map((el) => el.textContent.trim().slice(0, 50)));
+  expect(clipped, 'text should not be cut off without an ellipsis').toEqual([]);
+  const text = await page.locator('body').innerText();
+  expect(text.trim().length, 'the page should render visible content').toBeGreaterThan(0);
+  expect(text.match(/\{\{.*?\}\}|\bundefined\b|\bNaN\b|\[object Object\]|Invalid Date/g) ?? [], 'unrendered values or template tags show on the page').toEqual([]);
+  // Loading indicators must go away once the page has loaded.
+  const loaders = page.locator('[aria-busy="true"]:visible, [role="progressbar"]:visible, .spinner:visible, .loading:visible, .skeleton:visible');
+  await expect.poll(() => loaders.count(), { message: 'loading indicators should disappear after load', timeout: 10_000 }).toBe(0);
+});
+
+test('[G18] page has no horizontal overflow at common viewport sizes', async ({ page, baseURL }) => {
+  await page.goto(baseURL);
+  for (const width of [1440, 768, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow, `page overflows at ${width}px`).toBeLessThanOrEqual(1);
   }
-  if (present.search) {
-    await search.fill('zzqx-no-match-9471');
-    await search.press('Enter').catch(() => {});
-    await settle(page);
-    await page.waitForTimeout(500);
-    expect((await rowsText()).length, 'a search with no match should leave fewer rows').toBeLessThan(before.length + (before.length ? 0 : 1));
-    await search.fill('');
-    await search.press('Enter').catch(() => {});
-    await settle(page);
+});
+
+test('[G19] visible links and controls have names and keyboard access', async ({ page, baseURL }) => {
+  await page.goto(baseURL);
+  const links = page.locator('a:visible');
+  for (let i = 0; i < await links.count(); i++) {
+    expect((await links.nth(i).getAttribute('href'))?.trim(), `link ${i + 1} needs a destination`).toBeTruthy();
   }
-  if (present.next && !present.search) {
-    const firstRow = (await rowsText())[0];
-    await next.click();
-    await settle(page);
-    expect((await rowsText())[0], 'the next page should show different rows').not.toBe(firstRow);
-    expect(await page.locator(rowsSel).count(), 'the next page should not be empty').toBeGreaterThan(0);
+  const controls = page.locator('button:visible, [role="button"]:visible, input:not([type="hidden"]):visible, select:visible, textarea:visible');
+  for (let i = 0; i < await controls.count(); i++) {
+    await expect(controls.nth(i), `control ${i + 1} needs an accessible name`).toHaveAccessibleName(/\S/);
   }
+  if (await links.count() + await controls.count()) {
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
+  }
+});
+
+test('[G20] keyboard focus is visible and dialogs close with Escape', async ({ page, baseURL }) => {
+  await page.goto(baseURL);
+  await settle(page);
+  const focusables = page.locator('a[href]:visible, button:visible:enabled, input:not([type="hidden"]):visible:enabled, select:visible:enabled, textarea:visible:enabled, [tabindex]:not([tabindex="-1"]):visible');
+  test.skip(!(await focusables.count()), 'Not applicable: no focusable controls on this page');
+  const unstyled = [];
+  for (let i = 0; i < Math.min(10, await focusables.count()); i++) {
+    await page.keyboard.press('Tab');
+    const info = await page.evaluate(() => {
+      const el = document.activeElement;
+      if (!el || el === document.body) return null;
+      const s = getComputedStyle(el);
+      const ring = (s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0) || (s.boxShadow && s.boxShadow !== 'none');
+      return { ring, name: `${el.tagName.toLowerCase()} ${(el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 30)}` };
+    });
+    if (info && !info.ring) unstyled.push(info.name);
+  }
+  expect(unstyled, 'keyboard focus needs a visible indicator (outline or box-shadow)').toEqual([]);
+  const dialog = page.locator('dialog[open], [role="dialog"]:visible, [aria-modal="true"]:visible').first();
+  if (await dialog.count()) {
+    await page.keyboard.press('Escape');
+    await expect(dialog, 'an open dialog should close with Escape').toBeHidden();
+  }
+});
+
+test('[G21] images and headings meet basic accessibility checks', async ({ page, baseURL }) => {
+  await page.goto(baseURL);
+  const missingAlt = await page.locator('img:not([alt]):not([aria-hidden="true"])').count();
+  expect(missingAlt, 'images need an alt attribute or must be marked decorative').toBe(0);
+  const levels = await page.locator('h1, h2, h3, h4, h5, h6').evaluateAll((items) => items.map((item) => Number(item.tagName.slice(1))));
+  for (let i = 1; i < levels.length; i++) expect(levels[i] - levels[i - 1], 'heading levels should not skip').toBeLessThanOrEqual(1);
+});
+
+test('[G22] semantic elements and heading hierarchy', async ({ page, baseURL }) => {
+  await page.goto(baseURL);
+  await settle(page);
+  // A clickable div/span with no role, tabindex or native control inside cannot be reached or used by keyboard.
+  const fakeButtons = await page.evaluate(() => [...document.querySelectorAll('div, span, li, img, i, svg')].filter((el) => {
+    if (!el.checkVisibility?.() || el.closest('a, button, label, summary, [role], [tabindex]')) return false;
+    if (el.querySelector('a, button, input, select, textarea, [role="button"], [tabindex]')) return false;
+    return el.hasAttribute('onclick') || getComputedStyle(el).cursor === 'pointer';
+  }).slice(0, 5).map((el) => `<${el.tagName.toLowerCase()} class="${el.className?.baseVal ?? el.className}"> ${el.textContent.trim().slice(0, 40)}`));
+  expect(fakeButtons, 'clickable elements should be <button>/<a> (or have role and tabindex)').toEqual([]);
+  const h1 = await page.locator('h1:visible').count();
+  expect(h1, 'the page should have exactly one visible <h1>').toBe(1);
+  const first = await page.locator('h1:visible, h2:visible, h3:visible, h4:visible, h5:visible, h6:visible').first().evaluate((el) => el.tagName).catch(() => null);
+  expect(first, 'the first heading should be the <h1>').toBe('H1');
 });
