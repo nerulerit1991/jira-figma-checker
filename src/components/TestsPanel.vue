@@ -15,7 +15,7 @@ const props = defineProps({
 });
 defineEmits(['verify']);
 
-const FILE_LABELS = { 'behavior.spec.js': 'Functionality', 'api.spec.js': 'API & health' };
+const FILE_LABELS = { 'behavior.spec.js': 'Functionality', 'api.spec.js': 'API' };
 
 // Before a run, a test of a skip-only script is already known to be skipped, with its reason.
 const pendingRow = (t) => {
@@ -99,7 +99,7 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
 
     <details class="accordion suite-accordion">
       <summary>
-        <span class="acc-title">API &amp; health</span>
+        <span class="acc-title">API</span>
         <span v-if="needsReview('api.spec.js')" class="score-chip warn">Not verified</span>
         <span v-if="groupFor('api.spec.js')" class="score-chip" :class="groupFor('api.spec.js').items.some((r) => r.status === 'failed') ? 'bad' : 'good'">{{ sectionScore(groupFor('api.spec.js').items) }}</span>
         <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
