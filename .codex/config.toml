@@ -1,0 +1,5 @@
+[mcp_servers.atlassian-ui-checker]
+url = "https://mcp.atlassian.com/v2/mcp"
+
+[mcp_servers.figma-ui-checker]
+url = "https://mcp.figma.com/mcp"

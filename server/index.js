@@ -36,7 +36,7 @@ import { capturePage, scanForTests, VIEWPORTS } from './capture.js';
 import { getViewports, setViewports, loadViewports, isViewportName } from './viewports.js';
 import { parseFigmaUrl, withScheme } from './figma.js';
 import { fixConnection, getJobs, signOutAll, browserStatus, cancelOtherAgentLogins } from './connections.js';
-import { verifyScript, readTests, readGlobalTests, generateTests, runTests, runGlobalTests, rerunFailedTests, sameSite } from './tests.js';
+import { verifyScript, readTests, readGlobalTests, generateTests, runTests, runGlobalTests, rerunFailedTests, sameSite, saveScript } from './tests.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -507,6 +507,15 @@ app.get('/api/full-figma', async (req, res) => {
   res.json({ projects: await listFullFigmaProjects() });
 });
 
+// Frames of a saved Figma file by its key, before any ticket uses it (e.g. MyTeam's assign form). No Figma API call.
+app.get('/api/full-figma/:fileKey/frames', async (req, res) => {
+  const { fileKey } = req.params;
+  if (!/^[0-9A-Za-z]{10,128}$/.test(fileKey)) throw httpError(400, 'That saved Figma file is not a valid file key.');
+  const full = await readFullFigma(fileKey);
+  if (!full) throw httpError(404, `The whole Figma file is not saved yet (${await fullFigmaLocation(fileKey)}).`);
+  res.json({ fileKey, fileName: full.file.name, fetchedAt: full.fetchedAt, frames: listFrames(full.file) });
+});
+
 // Frames in a saved Figma file, so Check UI can ask which one to compare. No Figma API call.
 app.get('/api/tickets/:key/figma/frames', async (req, res) => {
   const { full, fileKey, figma } = await requireFullFigma(await requireTicket(req.params.key), req.query.fileKey);
@@ -862,6 +871,16 @@ app.post('/api/tickets/:key/tests/verify', async (req, res) => {
   // Not joined with other jobs (two clicks on different scripts are two changes); only refused while scripts are rewritten.
   if (inFlight.has(`tests-generate:${key}`)) throw httpError(409, `${TEST_JOBS.generate} is still in progress for ${key}. Try again when it finishes.`);
   res.json(await verifyScript(key, file, hash, Boolean(verified)));
+});
+
+// A person edited a script (e.g. one they rejected in MyTeam). Same checks as generated scripts; unverified until reviewed.
+app.put('/api/tickets/:key/tests/:file', async (req, res) => {
+  const { key } = await requireTicket(req.params.key);
+  const { file } = req.params;
+  if (!/^[a-z0-9-]+\.spec\.js$/.test(file)) throw httpError(400, 'Choose a script to save.');
+  if (typeof req.body?.content !== 'string' || !req.body.content.trim()) throw httpError(400, 'The script is empty.');
+  if (inFlight.has(`tests-generate:${key}`) || inFlight.has(`tests-run:${key}`)) throw httpError(409, `Tests are being written or run for ${key}. Try again when that finishes.`);
+  res.json(await saveScript(key, file, req.body.content));
 });
 
 // Re-runs only the failed ticket and global tests from the last run. No AI, no tokens.

@@ -556,6 +556,11 @@ li.fail .evidence { color: #d79a9a; }
 .test-group-title code { font-family: var(--mono); font-size: 0.7rem; color: var(--subtle); font-weight: 400; }
 li.skip .mark { color: var(--muted); background: var(--surface-2); border-color: var(--border-strong); }
 li.skip .item { color: var(--muted); }
+/* Held back until its script is verified: not a result, a step the person still has to take. */
+li.unverified .mark { color: #fbbf24; background: rgba(251, 191, 36, 0.12); border-color: rgba(251, 191, 36, 0.55); }
+li.unverified .item { color: var(--muted); }
+li.unverified .evidence { color: #e5c07b; }
+.unverified-text { color: #fbbf24; }
 .test-error {
   margin: 8px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--red-bg); color: #f3c2c2;
   font-family: var(--mono); font-size: 0.72rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word;

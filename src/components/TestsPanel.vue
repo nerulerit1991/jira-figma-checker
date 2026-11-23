@@ -17,10 +17,12 @@ defineEmits(['verify']);
 
 const FILE_LABELS = { 'behavior.spec.js': 'Functionality', 'api.spec.js': 'API' };
 
-// Before a run, a test of a skip-only script is already known to be skipped, with its reason.
+// Before a run, a test of a skip-only script is already known to be skipped, with its reason, and a test of a script
+// that is not verified is known to be held back.
 const pendingRow = (t) => {
   const skip = props.tests.verification?.[t.file]?.skipped?.find((s) => s.title === t.title);
-  return skip ? { file: t.file, title: t.title, status: 'skipped', skipReason: skip.reason } : { file: t.file, title: t.title, status: 'todo' };
+  if (skip) return { file: t.file, title: t.title, status: 'skipped', skipReason: skip.reason };
+  return { file: t.file, title: t.title, status: needsReview(t.file) ? 'unverified' : 'todo' };
 };
 
 // Last run's rows grouped by file; before the first run, list what was generated.
@@ -45,8 +47,12 @@ const seconds = (ms) => (ms == null ? '' : `${(ms / 1000).toFixed(1)}s`);
 const globalCases = computed(() => props.globalTests?.cases?.length ? props.globalTests.cases : globalTestCatalog.cases);
 const globalResult = (testCase) => props.globalTests?.results?.rows?.find((r) => r.title.startsWith(`[${testCase.id}]`));
 const groupFor = (file) => groups.value.find((g) => g.file === file);
-const statusSvg = (status) => status === 'passed' ? 'check' : status === 'failed' ? 'cross' : status === 'skipped' ? 'skip' : '';
-const rowClass = (status) => status === 'passed' ? 'pass' : status === 'failed' ? 'fail' : status === 'skipped' ? 'skip' : 'todo';
+// "skipped" = the test itself does not apply (its own reason); "unverified" = held back until its script is verified.
+const statusSvg = (status) => ({ passed: 'check', failed: 'cross', skipped: 'skip', unverified: 'lock' })[status] || '';
+const rowClass = (status) => ({ passed: 'pass', failed: 'fail', skipped: 'skip', unverified: 'unverified' })[status] || 'todo';
+const statusLabel = (status) => ({ passed: 'passed', failed: 'failed', skipped: 'skipped', unverified: 'not verified' })[status] || 'not run';
+// Once its script is verified, a held-back test is listed like any test that has not run yet ("not-run" from the server).
+const unverifiedNote = () => 'Not verified yet. Read the script above and click Verify to run this test.';
 const verifiedOf = (file) => Boolean(props.tests?.verification?.[file]?.verified);
 // A script with no tests runs nothing, so it is not shown for review and needs no verification.
 const hasTests = (file) => props.tests?.scripts?.[file] != null && hasTestCalls(props.tests.scripts[file]);
@@ -62,7 +68,7 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
     <p v-if="tests?.results" class="meta">
       Last ticket test run {{ new Date(tests.results.ranAt).toLocaleString() }} · {{ seconds(tests.results.durationMs) }} ·
       <span class="ok-text">{{ tests.results.passed }} passed</span> ·
-      <span :class="{ 'bad-text': tests.results.failed }">{{ tests.results.failed }} failed</span> · {{ tests.results.skipped }} skipped
+      <span :class="{ 'bad-text': tests.results.failed }">{{ tests.results.failed }} failed</span> · {{ tests.results.skipped }} skipped<template v-if="tests.results.unverified"> · <span class="unverified-text">{{ tests.results.unverified }} not verified</span></template>
       <template v-if="tests.results.rerunAt"> · failed re-run {{ new Date(tests.results.rerunAt).toLocaleString() }}</template>
     </p>
 
@@ -113,9 +119,9 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
         @verify="$emit('verify', $event)"
       />
       <ul v-if="groupFor('api.spec.js')" class="checklist suite-list">
-        <li v-for="(r, i) in groupFor('api.spec.js').items" :key="i" :class="r.status === 'passed' ? 'pass' : r.status === 'failed' ? 'fail' : r.status === 'skipped' ? 'skip' : 'todo'">
-          <span class="mark" :aria-label="r.status"><svg v-if="statusSvg(r.status) === 'check'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7" /></svg><svg v-else-if="statusSvg(r.status) === 'cross'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg><svg v-else-if="statusSvg(r.status) === 'skip'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 12h12" /></svg></span>
-          <div class="row-body"><div class="item">{{ r.title }}</div><FailureDetails v-if="r.error" :error="r.error" /><div v-if="r.skipReason" class="evidence">Skipped: {{ r.skipReason }}</div></div>
+        <li v-for="(r, i) in groupFor('api.spec.js').items" :key="i" :class="rowClass(r.status)">
+          <span class="mark" :aria-label="statusLabel(r.status)"><svg v-if="statusSvg(r.status) === 'check'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7" /></svg><svg v-else-if="statusSvg(r.status) === 'cross'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg><svg v-else-if="statusSvg(r.status) === 'skip'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 12h12" /></svg><svg v-else-if="statusSvg(r.status) === 'lock'" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg></span>
+          <div class="row-body"><div class="item">{{ r.title }}</div><FailureDetails v-if="r.error" :error="r.error" /><div v-if="r.status === 'unverified'" class="evidence">{{ unverifiedNote(r) }}</div><div v-else-if="r.skipReason" class="evidence">Skipped: {{ r.skipReason }}</div></div>
           <div class="row-tags"><span v-if="r.durationMs != null" class="tag">{{ seconds(r.durationMs) }}</span></div>
         </li>
       </ul>
@@ -138,8 +144,8 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
         @verify="$emit('verify', $event)"
       />
       <ul v-if="groupFor('behavior.spec.js') || uncovered.length" class="checklist suite-list">
-        <li v-for="(r, i) in groupFor('behavior.spec.js')?.items || []" :key="i" :class="r.status === 'passed' ? 'pass' : r.status === 'failed' ? 'fail' : r.status === 'skipped' ? 'skip' : 'todo'">
-          <span class="mark" :aria-label="r.status"><svg v-if="statusSvg(r.status) === 'check'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7" /></svg><svg v-else-if="statusSvg(r.status) === 'cross'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg><svg v-else-if="statusSvg(r.status) === 'skip'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 12h12" /></svg></span>
+        <li v-for="(r, i) in groupFor('behavior.spec.js')?.items || []" :key="i" :class="rowClass(r.status)">
+          <span class="mark" :aria-label="statusLabel(r.status)"><svg v-if="statusSvg(r.status) === 'check'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7" /></svg><svg v-else-if="statusSvg(r.status) === 'cross'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg><svg v-else-if="statusSvg(r.status) === 'skip'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 12h12" /></svg><svg v-else-if="statusSvg(r.status) === 'lock'" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg></span>
           <div class="row-body">
             <div class="item">{{ r.title }}</div>
             <div v-if="targetOf(r)" class="test-target">
@@ -147,7 +153,7 @@ const sectionScore = (rows) => rows?.length ? `${rows.filter((r) => r.status ===
               <template v-if="targetOf(r).section"><span>{{ targetOf(r).section }}</span><span class="tt-sep">›</span></template>
               <span>{{ targetOf(r).element }}</span>
             </div>
-            <FailureDetails v-if="r.error" :error="r.error" :target="targetOf(r)" /><div v-if="r.skipReason" class="evidence">Skipped: {{ r.skipReason }}</div>
+            <FailureDetails v-if="r.error" :error="r.error" :target="targetOf(r)" /><div v-if="r.status === 'unverified'" class="evidence">{{ unverifiedNote(r) }}</div><div v-else-if="r.skipReason" class="evidence">Skipped: {{ r.skipReason }}</div>
           </div>
           <div class="row-tags"><span v-if="r.durationMs != null" class="tag">{{ seconds(r.durationMs) }}</span></div>
         </li>

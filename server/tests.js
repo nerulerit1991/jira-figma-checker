@@ -123,7 +123,7 @@ export async function readTests(key) {
   } catch {
     return null;
   }
-  const results = await read('results.json').catch(() => null);
+  const results = withUnverified(await read('results.json').catch(() => null));
   const errors = await readErrors(dir);
   const scripts = {};
   for (const f of meta.files) scripts[f] = await fs.readFile(path.join(dir, f), 'utf8').catch(() => '');
@@ -137,7 +137,14 @@ export async function readTests(key) {
       return [f, { hash, verified: approved, verifiedAt: approved ? approvals[f].verifiedAt : null, skipOnly: Boolean(skipped), ...(skipped && { skipped }) }];
     }),
   );
-  return { ...meta, results, errors, scripts, verification };
+  return { ...meta, results: withVerifiedNotRun(results, verification), errors, scripts, verification };
+}
+
+/** A held-back test whose script was verified after the last run is an ordinary test that has not run yet. */
+function withVerifiedNotRun(results, verification) {
+  if (!results?.rows?.some((r) => r.status === 'unverified' && verification[r.file]?.verified)) return results;
+  const rows = results.rows.map((r) => (r.status === 'unverified' && verification[r.file]?.verified ? { ...r, status: 'not-run' } : r));
+  return { ...results, ...countRows(rows), rows };
 }
 
 // ---- Review before running ----
@@ -166,6 +173,20 @@ export async function verifyScript(key, file, hash, verified) {
   return readTests(key);
 }
 
+/**
+ * A person edited a saved script (e.g. one they rejected). It passes the same safety checks as a generated one and
+ * stays unverified (the approval is tied to the content) until someone reviews and verifies the new version.
+ */
+export async function saveScript(key, file, content) {
+  const dir = testsDir(key);
+  const meta = JSON.parse(await fs.readFile(path.join(dir, 'tests.json'), 'utf8').catch(() => 'null'));
+  if (!meta?.files?.includes(file)) throw Object.assign(new Error(`${file} is not one of this ticket's scripts.`), { status: 404 });
+  const problem = validateScript(content, siteOrigins(meta.url, meta.allowedOrigins || []));
+  if (problem) throw Object.assign(new Error(`Not saved: the script ${problem}.`), { status: 422 });
+  await writeFileAtomic(path.join(dir, file), content);
+  return readTests(key);
+}
+
 /** The saved scripts whose current content was verified. */
 async function verifiedFiles(dir, files) {
   const approvals = await readApprovals(dir);
@@ -178,6 +199,22 @@ async function verifiedFiles(dir, files) {
 }
 
 const NOT_VERIFIED = 'Not verified. Review the script and click Verify to run it.';
+
+// A test held back because its script is not verified has status "unverified", never "skipped": "skipped" is kept for
+// tests the script itself skips (not applicable). Each status is counted on its own.
+const countRows = (rows) => ({
+  passed: rows.filter((r) => r.status === 'passed').length,
+  failed: rows.filter((r) => r.status === 'failed').length,
+  skipped: rows.filter((r) => r.status === 'skipped').length,
+  unverified: rows.filter((r) => r.status === 'unverified').length,
+});
+
+/** Results saved before the "unverified" status existed listed those rows as skipped with NOT_VERIFIED as the reason. */
+function withUnverified(results) {
+  if (!results?.rows) return results;
+  const rows = results.rows.map((r) => (r.status === 'skipped' && r.skipReason === NOT_VERIFIED ? { ...r, status: 'unverified', skipReason: null } : r));
+  return { ...results, ...countRows(rows), rows };
+}
 
 // ---- Skip-only scripts ----
 // A script whose every test starts with `test.skip(true, '<reason>')` runs nothing: Playwright stops each test at that
@@ -310,7 +347,7 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * With `previous` (the last results), runs only its failed tests and merges their new results into it.
  */
 export async function runPlaywright(dir, url, { label, storageState, previous, files, unverified = [], unverifiedRows = [], skipOnly = {}, configDir = dir, reportDir = dir, filePrefix = '', outputDir = path.join(reportDir, '.output') }) {
-  // Rows of scripts that are not verified: listed as skipped, never run.
+  // Rows of scripts that are not verified: listed as "unverified", never run.
   const blocked = (r) => unverified.includes(r.file);
   const failed = previous?.rows.filter((r) => r.status === 'failed' && !blocked(r) && !skipOnly[r.file]) || [];
   // Playwright matches --grep against the title path joined with spaces (… describe … title); anchoring on the
@@ -375,9 +412,9 @@ export async function runPlaywright(dir, url, { label, storageState, previous, f
   // A re-run keeps every earlier row and swaps in the new result of each test that failed. A failed test that is no
   // longer in the scripts (renamed or removed) is marked skipped rather than left failed forever.
   const gone = { status: 'skipped', error: null, skipReason: 'No longer in the test scripts. Run all tests to refresh.' };
-  const notVerified = { status: 'skipped', error: null, durationMs: null, skipReason: NOT_VERIFIED };
+  const notVerified = { status: 'unverified', error: null, durationMs: null, skipReason: null };
   const rows = previous
-    ? previous.rows.map((r) => (skipOnly[r.file] ? skipOnly[r.file].find((x) => x.title === r.title) || { ...r, ...gone } : blocked(r) ? { ...r, ...notVerified } : r.status === 'failed' ? fresh.find((f) => sameTest(f, r)) || { ...r, ...gone } : r))
+    ? withUnverified(previous).rows.map((r) => (skipOnly[r.file] ? skipOnly[r.file].find((x) => x.title === r.title) || { ...r, ...gone } : blocked(r) ? { ...r, ...notVerified } : r.status === 'failed' ? fresh.find((f) => sameTest(f, r)) || { ...r, ...gone } : r))
     : [...fresh, ...unverifiedRows];
   const now = new Date().toISOString();
   const results = {
@@ -385,9 +422,7 @@ export async function runPlaywright(dir, url, { label, storageState, previous, f
     ranAt: previous ? previous.ranAt : now,
     durationMs: previous ? previous.durationMs : Date.now() - started,
     ...(previous && { rerunAt: now }),
-    passed: rows.filter((r) => r.status === 'passed').length,
-    failed: rows.filter((r) => r.status === 'failed').length,
-    skipped: rows.filter((r) => r.status === 'skipped').length,
+    ...countRows(rows),
     rows,
   };
   await writeFileAtomic(path.join(reportDir, `${filePrefix}results.json`), JSON.stringify(results, null, 2));
@@ -395,7 +430,7 @@ export async function runPlaywright(dir, url, { label, storageState, previous, f
 }
 
 // Re-checks the saved scripts in case they were edited by hand since generation, and splits them into the verified
-// ones (run) and the rest (listed as skipped, never loaded).
+// ones (run) and the rest (listed as "unverified", never loaded).
 async function checkSavedScripts(dir, url) {
   const meta = JSON.parse(await fs.readFile(path.join(dir, 'tests.json'), 'utf8').catch(() => 'null'));
   if (!meta) throw Object.assign(new Error('No tests yet. Generate them first.'), { status: 400 });
@@ -417,7 +452,7 @@ async function checkSavedScripts(dir, url) {
   const unverified = meta.files.filter((f) => !files.includes(f) && !skipOnly[f]);
   const unverifiedRows = (meta.tests || [])
     .filter((t) => unverified.includes(t.file))
-    .map((t) => ({ file: t.file, title: t.title, status: 'skipped', durationMs: null, error: null, skipReason: NOT_VERIFIED }));
+    .map((t) => ({ file: t.file, title: t.title, status: 'unverified', durationMs: null, error: null, skipReason: null }));
   return { files, unverified, unverifiedRows: [...Object.values(skipOnly).flat(), ...unverifiedRows], skipOnly };
 }
 
