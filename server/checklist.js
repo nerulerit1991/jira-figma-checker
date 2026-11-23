@@ -16,7 +16,7 @@ export const idsInTitle = (title) =>
 
 /**
  * One Playwright item's status from the ticket's tests: "passed", "failed", "skipped" (with the skip reason),
- * "not-run" (a test was written but not run since) or "no-test". `tests` is readTests()'s result.
+ * "unverified" (its script must be verified before it runs), "not-run" (a test was written but not run since) or "no-test". `tests` is readTests()'s result.
  */
 export function testStatusOf(id, tests) {
   const rows = (tests?.results?.rows || []).filter((r) => idsInTitle(r.title).includes(id));
@@ -25,6 +25,8 @@ export function testStatusOf(id, tests) {
     const passed = rows.filter((r) => r.status === 'passed');
     if (failed.length) return { status: 'failed', rows, detail: failed[0].error?.split('\n')[0] || `${failed.length} of ${rows.length} tests failed.` };
     if (passed.length) return { status: 'passed', rows, detail: `${passed.length} test${passed.length === 1 ? '' : 's'} passed.` };
+    if (rows.some((r) => r.status === 'not-run')) return { status: 'not-run', rows, detail: 'Test written but not run yet. Run the tests.' };
+    if (rows.some((r) => r.status === 'unverified')) return { status: 'unverified', rows, detail: 'Not verified yet. Review the script and click Verify, then run the tests.' };
     return { status: 'skipped', rows, detail: rows.find((r) => r.skipReason)?.skipReason || 'Test skipped.' };
   }
   // A test in a skip-only script never runs, so it is skipped before any run too, with the script's own reason.

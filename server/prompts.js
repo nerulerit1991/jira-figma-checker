@@ -401,7 +401,7 @@ RULES for the code:
      Use test.skip(true, 'Cannot create its own Playwright-Test record: <reason>') instead.
   The same applies to api.spec.js: send POST/PUT/PATCH/DELETE only for a Playwright-Test- record the test created, and
   delete it afterwards; otherwise skip that call with a reason.
-- EMPTY TABLE / LIST STATE: default case G08 already checks that any table shows a generic no-data message. Only when a
+- EMPTY TABLE / LIST STATE: default case G19 already checks that any table shows a generic no-data message. Only when a
   CHECKLIST ITEM above names a table's empty state (its exact message, icon or behaviour), write that item's test this way,
   titled "[<checklist id>] <section>: <table> shows its no-data state when there are no records".
   Never delete or change real data to empty it; mock the response instead, which never reaches the server:

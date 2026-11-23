@@ -36,7 +36,7 @@ const skipOnly = computed(() => Boolean(props.state?.skipOnly));
       <span class="score-chip" :class="verified ? 'good' : 'warn'">{{ verified ? 'Verified' : 'Not verified' }}</span>
       <span v-if="riskyCount" class="risk-count">⚠ {{ riskyCount }} line{{ riskyCount === 1 ? '' : 's' }} to check</span>
       <span v-if="ownCount" class="own-count">✓ {{ ownCount }} on its own Playwright-Test record{{ ownCount === 1 ? '' : 's' }}</span>
-      <span class="review-hint">{{ verified ? `Reviewed ${new Date(state.verifiedAt).toLocaleString()}` : 'Read the script, then verify it. Until then its tests are skipped.' }}</span>
+      <span class="review-hint">{{ verified ? `Reviewed ${new Date(state.verifiedAt).toLocaleString()}` : 'Read the script, then verify it. Until then its tests do not run (shown as Not verified).' }}</span>
       <button
         class="verify-btn"
         :class="verified ? 'ghost' : 'primary'"

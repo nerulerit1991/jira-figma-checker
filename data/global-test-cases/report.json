@@ -1,0 +1,544 @@
+{
+  "config": {
+    "argv": [
+      "/Users/nathanaellerit/.nvm/versions/node/v24.12.0/bin/node",
+      "/Users/nathanaellerit/Documents/code/jira-figma-ui-checker/node_modules/.bin/playwright",
+      "test",
+      "-c",
+      "playwright.config.mjs",
+      "--list"
+    ],
+    "configFile": "/Users/nathanaellerit/Documents/code/jira-figma-ui-checker/data/global-test-cases/playwright.config.mjs",
+    "rootDir": "/Users/nathanaellerit/Documents/code/jira-figma-ui-checker/data/global-test-cases",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {},
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/Users/nathanaellerit/Documents/code/jira-figma-ui-checker/data/global-test-cases/.output",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {},
+        "id": "",
+        "name": "",
+        "testDir": "/Users/nathanaellerit/Documents/code/jira-figma-ui-checker/data/global-test-cases",
+        "testIgnore": [],
+        "testMatch": [
+          "/.*\\.spec\\.js$/"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "filteredProjects": [
+      {
+        "grep": {},
+        "grepInvert": null,
+        "outputDir": "/Users/nathanaellerit/Documents/code/jira-figma-ui-checker/data/global-test-cases/.output",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {},
+        "name": "",
+        "testDir": "/Users/nathanaellerit/Documents/code/jira-figma-ui-checker/data/global-test-cases",
+        "snapshotDir": "/Users/nathanaellerit/Documents/code/jira-figma-ui-checker/data/global-test-cases",
+        "testIgnore": [],
+        "testMatch": {},
+        "timeout": 30000,
+        "use": {
+          "headless": true,
+          "trace": "off",
+          "screenshot": "off"
+        },
+        "dependencies": [],
+        "ignoreSnapshots": false,
+        "__projectId": ""
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json",
+        {
+          "outputFile": "report.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "default",
+    "updateSourceMethod": "patch",
+    "version": "1.64.1",
+    "workers": 2,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "global.spec.js",
+      "file": "global.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "[G01] no secret keys are exposed to the browser",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-84eb15059adf3975060f",
+          "file": "global.spec.js",
+          "line": 90,
+          "column": 1
+        },
+        {
+          "title": "[G02] protected pages require a session and handle an expired one",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-9ec42528f7ff5e669156",
+          "file": "global.spec.js",
+          "line": 122,
+          "column": 1
+        },
+        {
+          "title": "[G03] page loads without browser or first-party request errors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-5e2b4ef60426fa22b2c0",
+          "file": "global.spec.js",
+          "line": 170,
+          "column": 1
+        },
+        {
+          "title": "[G04] JS, CSS, font and image assets load",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-1a7dc0e42f5c1a1d3e52",
+          "file": "global.spec.js",
+          "line": 187,
+          "column": 1
+        },
+        {
+          "title": "[G05] third-party scripts load without errors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-9dfa3a7f159387ad8cbb",
+          "file": "global.spec.js",
+          "line": 199,
+          "column": 1
+        },
+        {
+          "title": "[G06] API requests succeed, are fast and are not duplicated",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-75cacd2177e6d20a8a45",
+          "file": "global.spec.js",
+          "line": 215,
+          "column": 1
+        },
+        {
+          "title": "[G07] API responses are valid JSON with correct data types",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-723536844750952c1246",
+          "file": "global.spec.js",
+          "line": 227,
+          "column": 1
+        },
+        {
+          "title": "[G08] API errors and slow responses show a clear state",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-6649a14b060fe9412d9e",
+          "file": "global.spec.js",
+          "line": 246,
+          "column": 1
+        },
+        {
+          "title": "[G09] async form actions do not submit twice on a rapid double click",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-3d4d8cb50a0b6360167c",
+          "file": "global.spec.js",
+          "line": 291,
+          "column": 1
+        },
+        {
+          "title": "[G10] required form fields validate without submitting data",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-5c0fde8244f17ffab703",
+          "file": "global.spec.js",
+          "line": 314,
+          "column": 1
+        },
+        {
+          "title": "[G11] email and phone fields reject invalid formats",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-85167c8c1dcdb7b11d73",
+          "file": "global.spec.js",
+          "line": 322,
+          "column": 1
+        },
+        {
+          "title": "[G12] date and date-range fields reject invalid values",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-8923081a1885e3827b54",
+          "file": "global.spec.js",
+          "line": 340,
+          "column": 1
+        },
+        {
+          "title": "[G13] search, filter, sort and pagination update the list",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-cea9dc22ff9752a0d441",
+          "file": "global.spec.js",
+          "line": 371,
+          "column": 1
+        },
+        {
+          "title": "[G14] tables show a no-data state when their list is empty",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-c212ae962016d3aca755",
+          "file": "global.spec.js",
+          "line": 413,
+          "column": 1
+        },
+        {
+          "title": "[G15] shared navigation links have working destinations",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-bd82c9e09dfb56ea68e1",
+          "file": "global.spec.js",
+          "line": 459,
+          "column": 1
+        },
+        {
+          "title": "[G16] external links open in a new tab",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-c7d1fd928784104c00bf",
+          "file": "global.spec.js",
+          "line": 472,
+          "column": 1
+        },
+        {
+          "title": "[G17] text is not cut off and expected UI renders",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-d4fd330242155a1724aa",
+          "file": "global.spec.js",
+          "line": 487,
+          "column": 1
+        },
+        {
+          "title": "[G18] page has no horizontal overflow at common viewport sizes",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-4b73d957b63d397fced3",
+          "file": "global.spec.js",
+          "line": 508,
+          "column": 1
+        },
+        {
+          "title": "[G19] visible links and controls have names and keyboard access",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-e01e0832da39eddc7ed1",
+          "file": "global.spec.js",
+          "line": 517,
+          "column": 1
+        },
+        {
+          "title": "[G20] keyboard focus is visible and dialogs close with Escape",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-9c6bbfbccf66df78df50",
+          "file": "global.spec.js",
+          "line": 533,
+          "column": 1
+        },
+        {
+          "title": "[G21] images and headings meet basic accessibility checks",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-29866dc7172f7ce28d9f",
+          "file": "global.spec.js",
+          "line": 558,
+          "column": 1
+        },
+        {
+          "title": "[G22] semantic elements and heading hierarchy",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "3d9412d338a142bbc165-afe52ac0a993d697200c",
+          "file": "global.spec.js",
+          "line": 566,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-19T08:50:41.418Z",
+    "duration": 99.56799999999998,
+    "expected": 0,
+    "skipped": 22,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}
