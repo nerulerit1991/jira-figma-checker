@@ -87,3 +87,63 @@ export async function fetchJiraIssue(jiraUrl, key) {
     otherLinks,
   };
 }
+
+/** Calls the Jira Cloud REST API v3 on the ticket's site with the .env token; throws with a readable message. */
+async function jiraRequest(jiraUrl, pathname, { method = 'GET', body } = {}) {
+  const site = new URL(jiraUrl).origin;
+  if (!/\.atlassian\.net$/i.test(new URL(site).hostname)) {
+    throw Object.assign(new Error(`The Jira API works with Jira Cloud sites (*.atlassian.net); this link is on ${site}.`), { status: 400 });
+  }
+  if (!jiraApiEnabled()) throw Object.assign(new Error('Jira API is not set up: add JIRA_EMAIL and JIRA_API_TOKEN to .env.'), { status: 400 });
+  const auth = Buffer.from(`${process.env.JIRA_EMAIL}:${process.env.JIRA_API_TOKEN}`).toString('base64');
+  let res;
+  try {
+    res = await fetch(`${site}/rest/api/3${pathname}`, {
+      method,
+      headers: { Authorization: `Basic ${auth}`, Accept: 'application/json', ...(body && { 'Content-Type': 'application/json' }) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (err) {
+    throw Object.assign(new Error(`Could not reach Jira (${err.cause?.code || err.message}).`), { status: 502 });
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    const detail = [...(data?.errorMessages || []), ...Object.values(data?.errors || {})].join(' ');
+    const messages = {
+      401: 'Jira refused the API token. Check JIRA_EMAIL and JIRA_API_TOKEN in .env.',
+      403: 'Your Jira account is not allowed to do this on the issue.',
+      404: 'The issue was not found, or your account cannot see it.',
+    };
+    throw Object.assign(new Error(`${messages[res.status] || `Jira API error (${res.status}).`}${detail ? ` ${detail}` : ''}`), { status: res.status === 404 ? 404 : 502 });
+  }
+  return res.status === 204 ? null : res.json().catch(() => null);
+}
+
+/**
+ * Moves the issue to the status named `statusName` (matched by name, case-insensitive, since transition ids differ per
+ * workflow). Already there → nothing to do. No transition to that status → skipped, with the statuses it can go to.
+ * `dryRun` reports what would happen without changing the issue.
+ * @returns {Promise<{ state: 'moved' | 'unchanged' | 'skipped' | 'would-move', from: string|null, to: string, message: string, available?: string[] }>}
+ */
+export async function transitionJiraIssue(jiraUrl, key, statusName, { dryRun = false } = {}) {
+  const target = String(statusName || '').trim();
+  if (!target) throw Object.assign(new Error('A status name is required.'), { status: 400 });
+  const same = (a) => String(a || '').trim().toLowerCase() === target.toLowerCase();
+  const id = encodeURIComponent(key);
+
+  const issue = await jiraRequest(jiraUrl, `/issue/${id}?fields=status`);
+  const from = issue?.fields?.status?.name || null;
+  if (same(from)) return { state: 'unchanged', from, to: from, message: `${key} is already ${from}.` };
+
+  const { transitions = [] } = (await jiraRequest(jiraUrl, `/issue/${id}/transitions`)) || {};
+  const move = transitions.find((t) => same(t.to?.name)) || transitions.find((t) => same(t.name));
+  if (!move) {
+    const available = [...new Set(transitions.map((t) => t.to?.name).filter(Boolean))];
+    return { state: 'skipped', from, to: target, available, message: `${key} cannot move from ${from} to "${target}" (it can go to: ${available.join(', ') || 'nothing'}).` };
+  }
+  const to = move.to?.name || target;
+  if (dryRun) return { state: 'would-move', from, to, message: `${key} would move from ${from} to ${to}.` };
+  await jiraRequest(jiraUrl, `/issue/${id}/transitions`, { method: 'POST', body: { transition: { id: move.id } } });
+  return { state: 'moved', from, to, message: `${key} moved from ${from} to ${to}.` };
+}

@@ -56,7 +56,9 @@ function runCli(cmd, args, timeoutMs = 30_000) {
     const child = spawn(cmd, args, { cwd: ROOT, env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout = (stdout + chunk.toString()).slice(-8000); });
+    // Keep stdout whole: callers parse it as JSON (e.g. `codex mcp list --json` is >8 KB), and trimming its start
+    // breaks the parse. Only stderr, used in error messages, is trimmed.
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     child.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString()).slice(-8000); });
     const timer = setTimeout(() => {
       child.kill('SIGTERM');
@@ -69,7 +71,7 @@ function runCli(cmd, args, timeoutMs = 30_000) {
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
-      else reject(new Error([stderr, stdout].filter(Boolean).join('\n').trim() || `${cmd} ${args.join(' ')} exited with code ${code}`));
+      else reject(new Error([stderr, stdout.slice(-8000)].filter(Boolean).join('\n').trim() ||`${cmd} ${args.join(' ')} exited with code ${code}`));
     });
   });
 }

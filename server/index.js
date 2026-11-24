@@ -1,4 +1,4 @@
-import { fetchJiraIssue, jiraApiEnabled } from './jiraApi.js';
+import { fetchJiraIssue, jiraApiEnabled, transitionJiraIssue } from './jiraApi.js';
 import { fetchFigmaFile, frameFromFile, listFrames, figmaApiEnabled, figmaApiBlockedUntil } from './figmaApi.js';
 import express from 'express';
 import path from 'node:path';
@@ -376,6 +376,12 @@ const figmaViaOf = (saved) => saved?.via || (saved?.ai?.source === 'figma-api' ?
 // Reads Figma from exactly one source, picked by the tab in the UI. There is no fallback between them,
 // so each source's own error is shown: "mcp" (local Figma MCP), "bridge" (Figma desktop app)
 // or "api" (Figma REST API with FIGMA_TOKEN).
+// Moves the Jira issue to a status by name (used by MyTeam: "In Progress" when its developer starts). Jira API only.
+app.post('/api/tickets/:key/jira/status', async (req, res) => {
+  const { key, jiraUrl } = await requireTicket(req.params.key);
+  res.json(await transitionJiraIssue(jiraUrl, key, req.body?.status, { dryRun: Boolean(req.body?.dryRun) }));
+});
+
 app.post('/api/tickets/:key/figma', async (req, res) => {
   const { key } = await requireTicket(req.params.key);
   const via = req.body.via === 'bridge' || req.body.via === 'api' ? req.body.via : 'mcp';
@@ -610,6 +616,11 @@ app.post('/api/tickets/:key/check/recheck', async (req, res) => {
   if (!errors.count && !errors.designRows.length) throw httpError(400, 'The last check has no errors to re-check.');
   const saved = await readJson(key, 'figma');
   const figma = saved?.specs?.length || saved?.typography?.length ? saved : null;
+  // A re-check only re-runs earlier design failures. If the last check had no Figma data, there were none, so the
+  // design was never compared: that needs a full Check UI (409 tells MyTeam to run one instead).
+  if (figma && !check.designMatch && !check.designChecklist?.length) {
+    throw httpError(409, 'The last check ran without Figma design data, and Figma data is available now. Run Check UI to compare the page with the design.');
+  }
 
   const data = await once(`check:${key}`, async () => {
     const started = Date.now();
