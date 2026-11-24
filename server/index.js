@@ -1,4 +1,4 @@
-import { fetchJiraIssue, jiraApiEnabled, transitionJiraIssue } from './jiraApi.js';
+import { fetchIssueStatuses, fetchJiraIssue, jiraApiEnabled, transitionJiraIssue } from './jiraApi.js';
 import { fetchFigmaFile, frameFromFile, listFrames, figmaApiEnabled, figmaApiBlockedUntil } from './figmaApi.js';
 import express from 'express';
 import path from 'node:path';
@@ -380,6 +380,21 @@ const figmaViaOf = (saved) => saved?.via || (saved?.ai?.source === 'figma-api' ?
 app.post('/api/tickets/:key/jira/status', async (req, res) => {
   const { key, jiraUrl } = await requireTicket(req.params.key);
   res.json(await transitionJiraIssue(jiraUrl, key, req.body?.status, { dryRun: Boolean(req.body?.dryRun) }));
+});
+
+// Status of other issues on a Jira Cloud site (used by MyTeam for ticket dependencies). Read-only, Jira API only.
+// ?site=https://x.atlassian.net&keys=SCRUM-5,SCRUM-6
+app.get('/api/jira/issues', async (req, res) => {
+  let site;
+  try {
+    site = new URL(String(req.query.site || ''));
+  } catch {
+    throw httpError(400, 'A Jira site URL is required (e.g. https://your-site.atlassian.net).');
+  }
+  if (site.protocol !== 'https:' || !/\.atlassian\.net$/i.test(site.hostname)) throw httpError(400, 'Dependency status works with Jira Cloud sites (https://*.atlassian.net).');
+  if (!jiraApiEnabled()) throw httpError(400, 'Jira API is not set up in the checker: add JIRA_EMAIL and JIRA_API_TOKEN to its .env and restart it.');
+  const keys = String(req.query.keys || '').split(',');
+  res.json(await fetchIssueStatuses(site.origin, keys));
 });
 
 app.post('/api/tickets/:key/figma', async (req, res) => {

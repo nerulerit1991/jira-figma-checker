@@ -88,6 +88,45 @@ export async function fetchJiraIssue(jiraUrl, key) {
   };
 }
 
+const ISSUE_KEY = /^[A-Z][A-Z0-9_]+-\d+$/;
+
+/**
+ * Status of several issues on one Jira Cloud site (`site`: e.g. https://x.atlassian.net), for MyTeam's dependencies,
+ * with the issues each one "is blocked by" (Jira's Blocks link type). Read-only, Jira API only (no AI / MCP call).
+ * @returns {Promise<{ issues: object[], errors: Record<string, string> }>}
+ */
+export async function fetchIssueStatuses(site, keys) {
+  const list = [...new Set((Array.isArray(keys) ? keys : []).map((k) => String(k).trim().toUpperCase()))].filter((k) => ISSUE_KEY.test(k)).slice(0, 20);
+  if (!list.length) throw Object.assign(new Error('No valid issue keys (e.g. SCRUM-5).'), { status: 400 });
+  const issues = [];
+  const errors = {};
+  await Promise.all(
+    list.map(async (key) => {
+      try {
+        const issue = await jiraRequest(site, `/issue/${encodeURIComponent(key)}?fields=summary,status,issuelinks`);
+        const f = issue?.fields || {};
+        const row = {
+          key: issue?.key || key,
+          summary: f.summary || '',
+          status: f.status?.name || null,
+          // Jira's status category: "new" (To Do), "indeterminate" (In Progress), "done".
+          statusCategory: f.status?.statusCategory?.key || null,
+          url: `${new URL(site).origin}/browse/${issue?.key || key}`,
+          // "SCRUM-4 is blocked by SCRUM-5": on SCRUM-4 that link holds SCRUM-5 as its inward issue. "relates to" is not a blocker.
+          blockedBy: (Array.isArray(f.issuelinks) ? f.issuelinks : [])
+            .filter((l) => l.inwardIssue?.key && /blocked by/i.test(l.type?.inward || ''))
+            .map((l) => l.inwardIssue.key),
+        };
+        issues.push(row);
+      } catch (error) {
+        errors[key] = error.message;
+      }
+    }),
+  );
+  issues.sort((a, b) => list.indexOf(a.key) - list.indexOf(b.key));
+  return { issues, errors };
+}
+
 /** Calls the Jira Cloud REST API v3 on the ticket's site with the .env token; throws with a readable message. */
 async function jiraRequest(jiraUrl, pathname, { method = 'GET', body } = {}) {
   const site = new URL(jiraUrl).origin;
