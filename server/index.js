@@ -1,4 +1,4 @@
-import { fetchJiraIssue, jiraApiEnabled } from './jiraApi.js';
+import { fetchIssueStatuses, fetchJiraIssue, jiraApiEnabled, transitionJiraIssue } from './jiraApi.js';
 import { fetchFigmaFile, frameFromFile, listFrames, figmaApiEnabled, figmaApiBlockedUntil } from './figmaApi.js';
 import express from 'express';
 import path from 'node:path';
@@ -376,6 +376,27 @@ const figmaViaOf = (saved) => saved?.via || (saved?.ai?.source === 'figma-api' ?
 // Reads Figma from exactly one source, picked by the tab in the UI. There is no fallback between them,
 // so each source's own error is shown: "mcp" (local Figma MCP), "bridge" (Figma desktop app)
 // or "api" (Figma REST API with FIGMA_TOKEN).
+// Moves the Jira issue to a status by name (used by MyTeam: "In Progress" when its developer starts). Jira API only.
+app.post('/api/tickets/:key/jira/status', async (req, res) => {
+  const { key, jiraUrl } = await requireTicket(req.params.key);
+  res.json(await transitionJiraIssue(jiraUrl, key, req.body?.status, { dryRun: Boolean(req.body?.dryRun) }));
+});
+
+// Status of other issues on a Jira Cloud site (used by MyTeam for ticket dependencies). Read-only, Jira API only.
+// ?site=https://x.atlassian.net&keys=SCRUM-5,SCRUM-6
+app.get('/api/jira/issues', async (req, res) => {
+  let site;
+  try {
+    site = new URL(String(req.query.site || ''));
+  } catch {
+    throw httpError(400, 'A Jira site URL is required (e.g. https://your-site.atlassian.net).');
+  }
+  if (site.protocol !== 'https:' || !/\.atlassian\.net$/i.test(site.hostname)) throw httpError(400, 'Dependency status works with Jira Cloud sites (https://*.atlassian.net).');
+  if (!jiraApiEnabled()) throw httpError(400, 'Jira API is not set up in the checker: add JIRA_EMAIL and JIRA_API_TOKEN to its .env and restart it.');
+  const keys = String(req.query.keys || '').split(',');
+  res.json(await fetchIssueStatuses(site.origin, keys));
+});
+
 app.post('/api/tickets/:key/figma', async (req, res) => {
   const { key } = await requireTicket(req.params.key);
   const via = req.body.via === 'bridge' || req.body.via === 'api' ? req.body.via : 'mcp';
@@ -610,6 +631,11 @@ app.post('/api/tickets/:key/check/recheck', async (req, res) => {
   if (!errors.count && !errors.designRows.length) throw httpError(400, 'The last check has no errors to re-check.');
   const saved = await readJson(key, 'figma');
   const figma = saved?.specs?.length || saved?.typography?.length ? saved : null;
+  // A re-check only re-runs earlier design failures. If the last check had no Figma data, there were none, so the
+  // design was never compared: that needs a full Check UI (409 tells MyTeam to run one instead).
+  if (figma && !check.designMatch && !check.designChecklist?.length) {
+    throw httpError(409, 'The last check ran without Figma design data, and Figma data is available now. Run Check UI to compare the page with the design.');
+  }
 
   const data = await once(`check:${key}`, async () => {
     const started = Date.now();
