@@ -8,6 +8,7 @@ import TicketNav from './components/TicketNav.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import SignInChallengeDialog from './components/SignInChallengeDialog.vue';
 import NewTicketDialog from './components/NewTicketDialog.vue';
+import MonitorPanel from './components/MonitorPanel.vue';
 import FrameSelectDialog from './components/FrameSelectDialog.vue';
 import FigmaProjectDialog from './components/FigmaProjectDialog.vue';
 import FigmaSaveProjectDialog from './components/FigmaSaveProjectDialog.vue';
@@ -48,6 +49,9 @@ const statusLoading = ref(false);
 
 const tickets = ref([]);
 const selectedKey = ref(store.get('selectedTicket'));
+// Monitoring view (instead of the open ticket); remembered across reloads. Picking a ticket closes it.
+const monitorOpen = ref(store.get('monitorOpen') === '1');
+watch(monitorOpen, (on) => store.set('monitorOpen', on ? '1' : null));
 const ticket = ref(null);
 const jira = ref(null);
 const figma = ref(null);
@@ -86,11 +90,24 @@ const login = ref(null);
 const loginOn = ref(false);
 // Saving the toggle; it is disabled meanwhile so a quick on/off cannot leave the server in the other state.
 const loginSaving = ref(false);
+// .env accounts: the default PROJECT_* one (id null) and named PROJECT_<NAME>_* profiles. A profile the ticket uses
+// that is no longer in .env stays listed so the dropdown still shows what is selected.
+const loginProfiles = computed(() => {
+  const list = login.value?.profiles || [];
+  const current = login.value?.source === 'env' ? login.value.profile ?? null : undefined;
+  if (current === undefined || list.some((p) => p.id === current)) return list;
+  return [...list, { id: current, label: `${current ? current.toLowerCase().replace(/_/g, ' ') : 'default'} (not in .env)` }];
+});
+const envPrefix = (profile) => (profile ? `PROJECT_${profile}_` : 'PROJECT_');
+const loginProfileLabel = computed(() => loginProfiles.value.find((p) => p.id === (login.value?.profile ?? null))?.label || 'default');
 const loginNote = computed(() => {
   if (login.value?.source === 'saved') return `Signs in as ${login.value.username} (saved for this ticket)`;
-  if (login.value?.enabled && !login.value.hasPassword) return 'Set PROJECT_USERNAME_EMAIL and PROJECT_PASSWORD in .env, then restart the server';
-  if (login.value?.auto) return 'Turned on automatically: the page asked for a login. Uses the .env test account';
-  if (login.value?.enabled) return `Signs in as ${login.value.username} (.env test account)`;
+  if (login.value?.enabled && !login.value.hasPassword) {
+    const prefix = envPrefix(login.value.profile);
+    return `Set ${prefix}USERNAME_EMAIL and ${prefix}PASSWORD in .env, then restart the server`;
+  }
+  if (login.value?.auto) return `Turned on automatically: the page asked for a login. Signs in as ${login.value.username} (.env ${loginProfileLabel.value} account)`;
+  if (login.value?.enabled) return `Signs in as ${login.value.username} (.env ${loginProfileLabel.value} account)`;
   return 'Configure the username and password under .env';
 });
 // The note beside the toggle starts green, then eases to normal text colour 3s after login is switched on
@@ -123,7 +140,10 @@ async function toggleLogin() {
   }
   loginSaving.value = true;
   try {
-    const settings = await api.setLogin(key, on);
+    // The default .env account when it is set, else the first named profile.
+    const profiles = login.value?.profiles || [];
+    const profile = profiles.some((p) => p.id === null) ? null : profiles[0]?.id ?? null;
+    const settings = await api.setLogin(key, on, profile);
     if (selectedKey.value !== key) return;
     applyLogin(settings);
     if (on) flashLoginNote();
@@ -131,6 +151,25 @@ async function toggleLogin() {
     if (selectedKey.value !== key) return;
     loginOn.value = !on;
     error.value = e.message;
+  } finally {
+    loginSaving.value = false;
+  }
+}
+// Picks which .env account the ticket signs in with; the saved session is dropped so the next run signs in as it.
+async function changeLoginProfile(event) {
+  const key = selectedKey.value;
+  const value = event.target.value;
+  const profile = value === '' ? null : value;
+  loginSaving.value = true;
+  try {
+    const settings = await api.setLogin(key, true, profile);
+    if (selectedKey.value !== key) return;
+    applyLogin(settings);
+    flashLoginNote();
+  } catch (e) {
+    if (selectedKey.value !== key) return;
+    error.value = e.message;
+    event.target.value = login.value?.profile ?? '';
   } finally {
     loginSaving.value = false;
   }
@@ -168,6 +207,7 @@ async function signInNow() {
   const key = selectedKey.value;
   sessionBusy.value = true;
   signInError.value = '';
+  logoutNote.value = null;
   try {
     const settings = await api.signIn(key);
     if (selectedKey.value !== key) return;
@@ -178,12 +218,19 @@ async function signInNow() {
     sessionBusy.value = false;
   }
 }
-async function forgetSessionNow() {
+// Log out: the server clicks the site's "Log out" with the saved session, then deletes it. Its result shows
+// under the session row until the next sign-in or ticket switch.
+const logoutNote = ref(null);
+watch(selectedKey, () => { logoutNote.value = null; });
+async function logoutNow() {
   const key = selectedKey.value;
   sessionBusy.value = true;
+  logoutNote.value = null;
   try {
-    const settings = await api.forgetSession(key);
-    if (selectedKey.value === key) applyLogin(settings);
+    const { logout, ...settings } = await api.logout(key);
+    if (selectedKey.value !== key) return;
+    applyLogin(settings);
+    logoutNote.value = logout;
   } catch (e) {
     if (selectedKey.value === key) error.value = e.message;
   } finally {
@@ -1143,13 +1190,17 @@ onMounted(async () => {
           <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
           New ticket
         </button>
+        <button class="ghost monitor-btn" :class="{ on: monitorOpen }" :aria-pressed="monitorOpen" @click="monitorOpen = !monitorOpen">
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
+          Monitoring
+        </button>
         <button v-if="tickets.length" class="ghost reset-btn" :disabled="anyBusy" @click="resetAll">
           <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
           Reset all
         </button>
       </div>
 
-      <TicketNav data-tour="tickets" v-model="selectedKey" :tickets="tickets" :busy-keys="busyKeys" @reorder="reorderTickets" />
+      <TicketNav data-tour="tickets" v-model="selectedKey" @update:model-value="monitorOpen = false" :tickets="tickets" :busy-keys="busyKeys" @reorder="reorderTickets" />
 
       <div class="sidebar-foot" data-tour="connections">
         <div class="connections-head">
@@ -1174,8 +1225,8 @@ onMounted(async () => {
     <main class="main">
       <header class="topbar">
         <nav class="crumbs" aria-label="Breadcrumb">
-          <span>Tickets</span>
-          <template v-if="ticket">
+          <span>{{ monitorOpen ? 'Monitoring' : 'Tickets' }}</span>
+          <template v-if="ticket && !monitorOpen">
             <span class="crumb-sep">/</span>
             <span class="crumb-current">{{ ticket.key }}</span>
           </template>
@@ -1188,7 +1239,9 @@ onMounted(async () => {
 
       <p v-if="error" class="error" role="alert">{{ error }}</p>
 
-      <section v-if="!tickets.length" class="empty">
+      <MonitorPanel v-if="monitorOpen" />
+
+      <section v-else-if="!tickets.length" class="empty">
         <span class="empty-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
         </span>
@@ -1365,6 +1418,19 @@ onMounted(async () => {
                       <span class="switch-track" aria-hidden="true"></span>
                       Requires login
                     </label>
+                    <select
+                      v-if="loginOn && login?.source === 'env' && loginProfiles.length > 1"
+                      class="login-profile"
+                      aria-label="Test account"
+                      title="Which .env test account to sign in with"
+                      :value="login.profile ?? ''"
+                      :disabled="loginSaving || sessionBusy"
+                      @change="changeLoginProfile"
+                    >
+                      <option v-for="p in loginProfiles" :key="p.id ?? ''" :value="p.id ?? ''">
+                        {{ p.label }}{{ p.username ? ` · ${p.username}` : '' }}
+                      </option>
+                    </select>
                     <span v-if="loginOn && loginError" class="login-error" role="alert">{{ loginError }}</span>
                   </div>
                   <Transition name="login-note">
@@ -1375,8 +1441,15 @@ onMounted(async () => {
                   <div v-if="loginOn && login?.hasPassword" class="session-row">
                     <span>{{ sessionNote }}</span>
                     <button class="ghost session-btn" :disabled="sessionBusy" @click="signInNow">{{ sessionBusy ? 'Signing in…' : 'Sign in now' }}</button>
-                    <button v-if="login.sessionSavedAt" class="ghost session-btn" :disabled="sessionBusy" @click="forgetSessionNow">Forget session</button>
+                    <!-- Always shown so it can be found; greyed out until a sign-in has saved a session. -->
+                    <button
+                      class="ghost session-btn"
+                      :disabled="sessionBusy || !login.sessionSavedAt"
+                      :title="login.sessionSavedAt ? 'Clicks the site\'s Log out, then deletes the saved session' : 'Not signed in yet: use Sign in now first'"
+                      @click="logoutNow"
+                    >Log out</button>
                   </div>
+                  <p v-if="loginOn && logoutNote" class="logout-note" :class="{ err: !logoutNote.ok }" role="status">{{ logoutNote.message }}</p>
                 </div>
               </fieldset>
               <p v-if="dataLocked" class="hint">Details are locked while a check or test runs on them.</p>

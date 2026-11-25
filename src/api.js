@@ -47,12 +47,21 @@ export const api = {
   tokens: (key) => request(`${t(key)}/tokens`),
   login: (key) => request(`${t(key)}/login`),
   // On: sign in with the .env test account before runs. Off: forget the ticket's login.
-  setLogin: (key, on) => (on ? request(`${t(key)}/login`, { method: 'PUT', body: { useEnv: true } }) : request(`${t(key)}/login`, { method: 'DELETE' })),
+  // profile: which .env account (null = default PROJECT_*, or a PROJECT_<NAME>_* profile).
+  setLogin: (key, on, profile = null) => (on ? request(`${t(key)}/login`, { method: 'PUT', body: { useEnv: true, profile } }) : request(`${t(key)}/login`, { method: 'DELETE' })),
   // Signs in now and saves the session (a site with an OTP or CAPTCHA asks for it in the pop-up).
   signIn: (key) => request(`${t(key)}/login/test`, { method: 'POST', body: {} }),
   forgetSession: (key) => request(`${t(key)}/login/session`, { method: 'DELETE' }),
+  // Clicks the site's "Log out" with the saved session, then deletes it. Returns settings + { logout: { ok, message } }.
+  logout: (key) => request(`${t(key)}/login/logout`, { method: 'POST', body: {} }),
   // The OTP or CAPTCHA typed for the sign-in step `id`; value null cancels the sign-in.
   answerChallenge: (key, id, value) => request(`${t(key)}/login/challenge`, { method: 'POST', body: { id, value } }),
+  // Monitoring: website URLs checked for console errors, exceptions and failed requests.
+  monitor: () => request('/monitor'),
+  addMonitorSite: (url, profile) => request('/monitor/sites', { method: 'POST', body: { url, profile } }),
+  runMonitorSite: (id) => request(`/monitor/sites/${encodeURIComponent(id)}/run`, { method: 'POST', body: {} }),
+  removeMonitorSite: (id) => request(`/monitor/sites/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  answerMonitorChallenge: (profile, id, value) => request('/monitor/challenge', { method: 'POST', body: { profile, id, value } }),
   screenshotUrl: (key, viewport, at) => `/api${t(key)}/screenshot/${viewport}?t=${encodeURIComponent(at)}`,
 };
 

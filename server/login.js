@@ -28,7 +28,11 @@ const resultFile = (key) => path.join(authDir(key), 'last-login.json');
 const failureShot = (key) => path.join(authDir(key), 'last-login-failed.png');
 
 const LOGIN_TIMEOUT_MS = 30_000;
-const SUBMIT_TEXT = /^(log\s*in|sign\s*in|login|signin|continue|next|submit|enter|confirm|verify)$/i;
+// Also "Continue with Email" / "Sign in with password" buttons.
+const SUBMIT_TEXT = /^(log\s*in|sign\s*in|login|signin|continue|next|submit|enter|confirm|verify)(\s+with\s+(e-?mail|password))?$/i;
+// A button or link that opens the sign-in form (a modal, or a /login page), e.g. "Sign in", "Log in",
+// "Sign in or Create Account". "Sign in with Google" and other social logins are left alone.
+const SIGN_IN_TRIGGER = /^\s*(sign|log)[\s-]*in\b(?![\s\S]*\b(with|google|facebook|apple|microsoft|sso)\b)[\s\S]{0,40}$/i;
 const ERROR_TEXT = /invalid|incorrect|wrong|failed|not\s+match|try again|denied|locked|expired/i;
 // A redirect to a route named like one of these (a whole path or hash segment) means the page wants a signed-in visitor.
 const LOGIN_ROUTE = /(^|[/#?._-])(log-?in|sign-?in|auth|oauth|sso|saml)([/#?._-]|$)/i;
@@ -85,11 +89,36 @@ const originOf = (url) => {
   }
 };
 
-/** The .env test account, or null when PROJECT_USERNAME_EMAIL / PROJECT_PASSWORD are not both set. */
-function envAccount() {
-  const username = process.env.PROJECT_USERNAME_EMAIL?.trim();
-  const password = process.env.PROJECT_PASSWORD;
+// .env variable prefix of a test-account profile: PROJECT_ for the default one, PROJECT_<NAME>_ for a named one
+// (e.g. PROJECT_STAGING_USERNAME_EMAIL), used by Monitoring to sign in to different sites or environments.
+const envPrefix = (profile) => (profile ? `PROJECT_${profile}_` : 'PROJECT_');
+
+/** The .env test account of `profile` (default: PROJECT_*), or null when its username and password are not both set. */
+function envAccount(profile = null) {
+  const username = process.env[`${envPrefix(profile)}USERNAME_EMAIL`]?.trim();
+  const password = process.env[`${envPrefix(profile)}PASSWORD`];
   return username && password ? { username, password } : null;
+}
+
+/** The profile's login page from .env (PROJECT_LOGIN_URL or PROJECT_<NAME>_LOGIN_URL), or null. */
+const envLoginUrlOf = (profile = null) => process.env[`${envPrefix(profile)}LOGIN_URL`]?.trim() || null;
+
+/**
+ * Test-account profiles in .env for the Monitoring dropdown: the default PROJECT_USERNAME_EMAIL account (id null)
+ * and every PROJECT_<NAME>_USERNAME_EMAIL with its PROJECT_<NAME>_PASSWORD. Never includes passwords.
+ */
+export function envProfiles() {
+  const profiles = [];
+  const add = (id) => {
+    const account = envAccount(id);
+    if (account) profiles.push({ id, label: id ? id.toLowerCase().replace(/_/g, ' ') : 'default', username: account.username, loginUrl: envLoginUrlOf(id) });
+  };
+  add(null);
+  for (const name of Object.keys(process.env).sort()) {
+    const m = /^PROJECT_([A-Z0-9][A-Z0-9_]*)_USERNAME_EMAIL$/.exec(name);
+    if (m) add(m[1]);
+  }
+  return profiles;
 }
 
 /** The ticket's login with the .env account filled in. Throws when it uses .env and .env has no account. */
@@ -97,9 +126,10 @@ async function readCreds(key) {
   const creds = await readJson(credsFile(key));
   if (creds?.off) return null;
   if (creds?.source !== 'env') return creds;
-  const account = envAccount();
+  const account = envAccount(creds.profile);
   if (!account) {
-    throw Object.assign(new Error('"Requires login" is on, but PROJECT_USERNAME_EMAIL and PROJECT_PASSWORD are not set in .env. Add them and restart the server.'), { status: 400 });
+    const prefix = envPrefix(creds.profile);
+    throw Object.assign(new Error(`"Requires login" is on, but ${prefix}USERNAME_EMAIL and ${prefix}PASSWORD are not set in .env. Add them and restart the server.`), { status: 400 });
   }
   return { ...creds, ...account };
 }
@@ -108,15 +138,17 @@ async function readCreds(key) {
 export async function getLoginSettings(key) {
   const creds = await readJson(credsFile(key));
   const last = await readJson(resultFile(key));
-  if (!creds || creds.off) return { enabled: false, off: Boolean(creds?.off), last: null };
+  // The .env accounts the ticket can pick from (default first); usernames only.
+  const profiles = envProfiles().map(({ id, label, username }) => ({ id, label, username }));
+  if (!creds || creds.off) return { enabled: false, off: Boolean(creds?.off), last: null, profiles };
   // humanCheck: sign-in asked the person for an OTP or CAPTCHA; challenge: the step waiting for them right now.
   const session = await fs.stat(sessionFile(key)).catch(() => null);
   const pending = challenges.get(key);
   const challenge = pending ? { id: pending.id, kind: pending.kind, image: pending.image, message: pending.message } : null;
-  const shared = { humanCheck: Boolean(creds.humanCheck), sessionSavedAt: session?.mtime.toISOString() ?? null, challenge, last };
+  const shared = { humanCheck: Boolean(creds.humanCheck), sessionSavedAt: session?.mtime.toISOString() ?? null, challenge, last, profiles };
   if (creds.source === 'env') {
-    const account = envAccount();
-    return { enabled: true, source: 'env', auto: Boolean(creds.auto), loginUrl: creds.loginUrl, username: account?.username, hasPassword: Boolean(account), ...shared };
+    const account = envAccount(creds.profile);
+    return { enabled: true, source: 'env', profile: creds.profile || null, auto: Boolean(creds.auto), loginUrl: creds.loginUrl, username: account?.username, hasPassword: Boolean(account), ...shared };
   }
   return { enabled: true, source: 'saved', loginUrl: creds.loginUrl, username: creds.username, hasPassword: Boolean(creds.password), ...shared };
 }
@@ -125,8 +157,9 @@ export async function getLoginSettings(key) {
  * Turns on login with the .env test account. `loginUrl` is where to sign in; without it, sign-in starts at
  * PROJECT_LOGIN_URL or the page under test. `auto` marks a login turned on by a run, not by the user.
  */
-export async function enableEnvLogin(key, { loginUrl = null, auto = false } = {}) {
-  await writePrivate(credsFile(key), { source: 'env', loginUrl, auto });
+export async function enableEnvLogin(key, { loginUrl = null, auto = false, profile = null } = {}) {
+  if (profile && !/^[A-Z0-9][A-Z0-9_]*$/.test(profile)) throw Object.assign(new Error('Invalid .env profile name.'), { status: 400 });
+  await writePrivate(credsFile(key), { source: 'env', loginUrl, auto, ...(profile ? { profile } : {}) });
   await fs.rm(sessionFile(key), { force: true });
   await fs.rm(resultFile(key), { force: true });
   return getLoginSettings(key);
@@ -179,6 +212,57 @@ function markUserField(passwordPresent) {
   return true;
 }
 
+// Runs in the page: whether a visible box that is clearly for the username or email is showing (unlike a search box).
+function userFieldShowing() {
+  return [...document.querySelectorAll('input')].some((el) => {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height || el.disabled || getComputedStyle(el).visibility === 'hidden') return false;
+    const hint = [el.type, el.name, el.id, el.getAttribute('autocomplete'), el.placeholder, el.getAttribute('aria-label')].join(' ');
+    return el.type === 'email' || /user|email|e-mail|login|username/i.test(hint);
+  });
+}
+
+/**
+ * For login forms that only show after a click (a "Sign in" button opening a modal, a dropdown or a /login page):
+ * clicks sign-in buttons or links, up to MAX_OPEN_STEPS in a row (e.g. "Sign In" in the header, then "Sign in or
+ * Create Account" in the menu it opens), until the form shows. Returns whether a password box is now showing.
+ */
+const MAX_OPEN_STEPS = 3;
+async function openSignInForm(page, password) {
+  const clicked = new Set();
+  for (let step = 0; step < MAX_OPEN_STEPS; step++) {
+    const trigger = await nextSignInTrigger(page, clicked);
+    if (!trigger) return false;
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+    if (await password.waitFor({ timeout: 3000 }).then(() => true, () => false)) return true;
+    // A username-first form (two-step login): the caller fills it and waits for the password.
+    if (await page.evaluate(userFieldShowing).catch(() => false)) return false;
+  }
+  return false;
+}
+
+/** Clicks the first visible sign-in button or link not clicked yet (buttons and links before plain elements). */
+async function nextSignInTrigger(page, clicked) {
+  const locators = [
+    page.locator('button, a, [role=button], [role=link]').filter({ hasText: SIGN_IN_TRIGGER }),
+    // Headers often use a plain element with a click handler ("Sign In" in a <span>).
+    page.getByText(SIGN_IN_TRIGGER),
+  ];
+  for (const locator of locators) {
+    const count = Math.min(await locator.count().catch(() => 0), 6);
+    for (let i = 0; i < count; i++) {
+      const el = locator.nth(i);
+      const box = await el.boundingBox().catch(() => null);
+      if (!box || !(await el.isVisible().catch(() => false))) continue;
+      const id = `${(await el.innerText().catch(() => '')).trim()}|${Math.round(box.x)}|${Math.round(box.y)}`;
+      if (clicked.has(id)) continue;
+      clicked.add(id);
+      if (await el.click({ timeout: 3000 }).then(() => true, () => false)) return el;
+    }
+  }
+  return null;
+}
+
 async function submit(page, field) {
   // Whether Enter sent the form (a page load or a fetch/XHR). Only a form that ignored Enter gets its button
   // clicked: clicking after a rejected attempt would send the same wrong password, CAPTCHA or OTP a second time.
@@ -213,6 +297,8 @@ async function signIn(page, creds, sites, ask) {
 
   const password = page.locator('input[type=password]:visible').first();
   let hasPassword = await password.waitFor({ timeout: 5000 }).then(() => true, () => false);
+  // No form yet (e.g. a home page with a "Sign in" button that opens a modal or a /login page): open it first.
+  if (!hasPassword && !(await page.evaluate(userFieldShowing).catch(() => false))) hasPassword = await openSignInForm(page, password);
 
   // Two-step logins: username/email first, then the password on the next screen.
   if (!hasPassword) {
@@ -529,7 +615,7 @@ export function performLogin(key, pageUrl) {
 async function signInAndSave(key, pageUrl) {
   const saved = await readCreds(key);
   if (!saved) throw Object.assign(new Error('No login is set up for this ticket.'), { status: 400 });
-  const envLoginUrl = saved.source === 'env' ? process.env.PROJECT_LOGIN_URL?.trim() : null;
+  const envLoginUrl = saved.source === 'env' ? envLoginUrlOf(saved.profile) : null;
   const creds = { ...saved, loginUrl: saved.loginUrl || envLoginUrl || pageUrl };
   if (!creds.loginUrl) throw Object.assign(new Error('Enter the page URL first: sign-in starts there.'), { status: 400 });
   // Sites the password may be typed on: the page under test, the login page and PROJECT_LOGIN_URL.
@@ -585,6 +671,88 @@ async function signInAndSave(key, pageUrl) {
     challenges.get(key)?.settle(null);
     await browser?.close();
   }
+}
+
+// Log-out controls: "Log out", "Logout", "Sign out"; then a confirm button such as "Yes, I want to logout".
+const LOGOUT_TEXT = /^\s*(log|sign)[\s-]*(out|off)\s*$/i;
+const LOGOUT_YES = /^\s*yes\b[\s\S]{0,40}$/i;
+const LOGOUT_CONFIRM = /^\s*((log|sign)[\s-]*(out|off)|yes|confirm|ok)\s*$/i;
+const DIALOG = 'dialog, [role=dialog], [role=alertdialog], [aria-modal=true], [class*="modal" i], [class*="dialog" i]';
+// Menus that usually hold the log-out link (account / profile / user menus).
+const ACCOUNT_MENU = '[aria-label*="account" i], [aria-label*="profile" i], [aria-label*="user" i], [class*="avatar" i], [class*="account" i], [class*="profile" i]';
+
+/** Clicks the first visible element of `locator` (at most 6 tried). Returns whether one was clicked. */
+async function clickFirstVisible(locator) {
+  const count = Math.min(await locator.count().catch(() => 0), 6);
+  for (let i = 0; i < count; i++) {
+    const el = locator.nth(i);
+    if (!(await el.isVisible().catch(() => false))) continue;
+    if (await el.click({ timeout: 3000 }).then(() => true, () => false)) return true;
+  }
+  return false;
+}
+
+const clickLogout = (page) =>
+  clickFirstVisible(page.locator('button, a, [role=button], [role=menuitem], [role=link]').filter({ hasText: LOGOUT_TEXT })).then(
+    (done) => done || clickFirstVisible(page.getByText(LOGOUT_TEXT)),
+  );
+
+/**
+ * Opens `pageUrl` with the saved session and clicks the site's log-out control (opening an account menu first when
+ * it is hidden in one, and answering a "Are you sure?" confirm). Only clicks on the page's own site.
+ */
+async function logoutOnSite(file, pageUrl) {
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext({ storageState: file, viewport: { width: 1280, height: 900 } });
+    const page = await context.newPage();
+    await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: LOGIN_TIMEOUT_MS }).catch(() => page.waitForLoadState('load'));
+    if (originOf(page.url()) !== originOf(pageUrl)) {
+      return { ok: false, message: `The page went to another site (${originOf(page.url())}), so nothing was clicked there.` };
+    }
+    let clicked = await clickLogout(page);
+    if (!clicked) {
+      // The log-out link is often inside an account menu: open each likely menu and look again.
+      const menus = page.locator(ACCOUNT_MENU);
+      const count = Math.min(await menus.count().catch(() => 0), 6);
+      for (let i = 0; i < count && !clicked; i++) {
+        const menu = menus.nth(i);
+        if (!(await menu.isVisible().catch(() => false))) continue;
+        if (!(await menu.click({ timeout: 3000 }).then(() => true, () => false))) continue;
+        await page.waitForTimeout(500);
+        clicked = await clickLogout(page);
+      }
+    }
+    if (!clicked) return { ok: false, message: 'No "Log out" button found on the page.' };
+    await page.waitForTimeout(800);
+    // A confirm step ("Are you sure you want to logout?"): a "Yes, …" button, else a Log out / Confirm / OK button
+    // inside a dialog (never the menu's own "Log out" link again).
+    (await clickFirstVisible(page.locator('button, [role=button], a').filter({ hasText: LOGOUT_YES }))) ||
+      (await clickFirstVisible(page.locator(DIALOG).locator('button, [role=button]').filter({ hasText: LOGOUT_CONFIRM })));
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+    return { ok: true, message: 'Clicked Log out on the site.' };
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * Logs out: clicks the site's log-out control with the saved session (best effort), then deletes the session so the
+ * next run signs in again. Returns the login settings plus { logout: { ok, message } }.
+ */
+export async function logout(key, pageUrl) {
+  return oncePerTicket(key, async () => {
+    const file = sessionFile(key);
+    let result;
+    if (!(await fs.stat(file).catch(() => null))) return { ...(await getLoginSettings(key)), logout: { ok: true, message: 'No saved session: already logged out.' } };
+    if (!pageUrl) result = { ok: false, message: 'No page URL to log out from.' };
+    else result = await logoutOnSite(file, pageUrl).catch((err) => ({ ok: false, message: `Log out failed: ${err.message.split('\n')[0]}` }));
+    await fs.rm(file, { force: true });
+    await fs.rm(resultFile(key), { force: true });
+    const message = result.ok ? `${result.message} Saved session cleared.` : `${result.message} The saved session was cleared, but the site may keep it active until it expires.`;
+    return { ...(await getLoginSettings(key)), logout: { ok: result.ok, message } };
+  });
 }
 
 /** Deletes the ticket's saved session; the next run signs in again (asking for an OTP or CAPTCHA if the site does). */
