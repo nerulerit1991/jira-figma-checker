@@ -64,6 +64,12 @@ const CAPTCHA_VISIBLE = ['.g-recaptcha', '.h-captcha', '.cf-turnstile', 'iframe[
 const MANUAL_MESSAGE =
   'This login has a CAPTCHA the app cannot answer. A browser window opened on the login page with the username and password filled in: solve the CAPTCHA there, sign in (and enter any OTP), then come back. The app saves the session when it sees you are signed in.';
 
+// Pages opened only to look (is it behind a login? does the saved session still work?) never send writes:
+// POST / PUT / PATCH / DELETE requests the page makes on load are blocked. Sign-in itself is not affected.
+async function blockWrites(context) {
+  await context.route('**/*', (route) => (['GET', 'HEAD', 'OPTIONS'].includes(route.request().method()) ? route.continue() : route.abort('blockedbyclient')));
+}
+
 async function readJson(file) {
   try {
     return JSON.parse(await fs.readFile(file, 'utf8'));
@@ -551,6 +557,7 @@ async function sessionWorks(url, file) {
   const browser = await chromium.launch();
   try {
     const context = await browser.newContext({ storageState: file, viewport: { width: 1280, height: 900 } });
+    await blockWrites(context);
     const page = await context.newPage();
     const response = await page.goto(url, { waitUntil: 'networkidle', timeout: LOGIN_TIMEOUT_MS }).catch(() => null);
     await page.waitForTimeout(1000);
@@ -580,7 +587,9 @@ export async function detectLoginWall(url) {
   const { chromium } = await import('playwright');
   const browser = await chromium.launch();
   try {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    await blockWrites(context);
+    const page = await context.newPage();
     const response = await page.goto(url, { waitUntil: 'networkidle', timeout: LOGIN_TIMEOUT_MS }).catch(() => null);
     // Client-side redirects (single-page apps) can land a moment after the network goes quiet.
     await page.waitForTimeout(1000);

@@ -36,8 +36,9 @@ const RULES = [
 const PLACEHOLDER = /^(?:x+|\*+|\.+|-+|<[^>]*>|\$\{.*\}|%[^%]+%|\{\{.*\}\}|(?:your|my|example|sample|test|dummy|placeholder|changeme|undefined|null|true|false|password|secret|api[_-]?key|token)[\w-]*)$/i;
 const MAX_BODY = 6 * 1024 * 1024;
 // In context snippets, any long token-like run is masked too, in case it is a secret no rule knows.
-const LONG_TOKEN = /[A-Za-z0-9_+/=-]{16,}/g;
-const maskTokens = (text) => text.replace(LONG_TOKEN, (t) => mask(t));
+// Only runs of 20+ characters mixing letters and digits (what keys look like), so words such as X-Amz-Algorithm stay readable.
+const LONG_TOKEN = /[A-Za-z0-9_+/-]{20,}/g;
+const maskTokens = (text) => text.replace(LONG_TOKEN, (t) => (/[0-9]/.test(t) && /[A-Za-z]/.test(t) ? mask(t) : t));
 
 /** First 4 and last 4 characters, the rest hidden: enough to recognise the key, not to use it. */
 export function mask(value) {
@@ -53,6 +54,11 @@ function lineAt(text, index) {
 }
 
 /** Every secret in `text`: [{ rule, start, end, value }], specific rules first; the generic rule skips their values. */
+// An AWS access key ID inside a presigned URL (X-Amz-Credential=ASIA…/date/region/s3/aws4_request, raw or URL-encoded).
+// Expected: it is only the key ID (never the secret) plus a signature that expires, so it is reported as info.
+const PRESIGNED = { id: 'aws-presigned-url', label: 'AWS presigned URL (temporary key ID)', severity: 'info' };
+const PRESIGNED_BEFORE = /X-Amz-Credential(?:=|%3D)$/i;
+
 function findSpans(text) {
   const spans = [];
   const values = new Set();
@@ -63,7 +69,8 @@ function findSpans(text) {
       if (!value) continue;
       if (rule.id === 'assignment' && (values.has(value) || PLACEHOLDER.test(value) || /^[\w.]+\(|^\w+\.\w+$/.test(value))) continue;
       const start = m.index + (rule.group ? m[0].indexOf(value) : 0);
-      spans.push({ rule, start, end: start + value.length, value });
+      const presigned = rule.id === 'aws-access-key' && PRESIGNED_BEFORE.test(text.slice(Math.max(0, start - 20), start));
+      spans.push({ rule: presigned ? PRESIGNED : rule, start, end: start + value.length, value });
       values.add(value);
     }
   }
@@ -84,6 +91,12 @@ function maskedSlice(text, from, to, spans) {
   return out + maskTokens(text.slice(at, end));
 }
 
+/** `text` with every secret, and any long token-like string, masked: safe to store and show (e.g. an API error body). */
+export function redact(text) {
+  const t = String(text ?? '');
+  return maskedSlice(t, 0, t.length, findSpans(t));
+}
+
 /**
  * Secrets in `text` (one downloaded file). Returns [{ rule, label, severity, masked, line, context, fingerprint }],
  * where `context` is ~40 characters on each side with every secret in it masked. Nothing unmasked is returned.
@@ -98,12 +111,17 @@ export function scanForSecrets(text) {
     if (seen.has(id)) continue;
     seen.add(id);
     const masked = mask(span.value);
+    // Presigned URLs: how long the link stays valid (X-Amz-Expires, seconds), to flag long-lived ones.
+    const expires = span.rule === PRESIGNED ? /X-Amz-Expires(?:=|%3D)(\d+)/i.exec(text.slice(span.end, span.end + 600))?.[1] : null;
     found.push({
       rule: span.rule.id,
+      ...(expires ? { expiresIn: Number(expires) } : {}),
       label: span.rule.label,
       severity: span.rule.severity,
       masked,
       line: lineAt(text, span.start),
+      // 0-based, like DevTools' "Go to line:column" minus one; used to map minified files through source maps.
+      column: span.start - (text.lastIndexOf('\n', span.start - 1) + 1),
       context: maskedSlice(text, Math.max(0, span.start - 40), span.end + 40, spans).replace(/\s+/g, ' ').trim(),
       // Merges the same secret found in several files, without keeping the value.
       fingerprint: `${span.rule.id}|${span.value.length}|${masked}`,

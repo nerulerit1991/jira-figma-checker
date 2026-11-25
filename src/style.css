@@ -893,3 +893,24 @@ button.primary.new-btn:hover:not(:disabled) { background: #ffffff; }
 .monitor-type.sev-high { color: #ff4d5e; background: rgba(255, 77, 94, 0.12); border-color: rgba(255, 77, 94, 0.35); }
 .monitor-type.sev-medium { color: #fbbf24; background: rgba(251, 191, 36, 0.12); border-color: rgba(251, 191, 36, 0.4); }
 .monitor-type.sev-info { color: var(--muted); background: var(--surface-2); border-color: var(--border); }
+
+.monitor-help { margin-top: 8px; font-size: 0.78rem; }
+.monitor-help summary { cursor: pointer; color: var(--accent-hover); font-size: 0.76rem; user-select: none; }
+.monitor-help summary:hover { color: var(--text); }
+.monitor-help dl { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 4px 10px; margin: 10px 0 8px; }
+.monitor-help dt { color: var(--subtle); }
+.monitor-help dd { margin: 0; color: var(--text); word-break: break-all; }
+.monitor-help dd.mono, .monitor-help code { font-family: var(--mono); font-size: 0.72rem; }
+.monitor-help code { padding: 1px 6px; border-radius: 4px; background: var(--surface-2); word-break: break-all; }
+.monitor-help ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
+.monitor-fix { margin-top: 8px; color: var(--muted); }
+.monitor-fix strong { color: var(--text); }
+@media (max-width: 720px) { .monitor-help dl { grid-template-columns: 1fr; } }
+.monitor-errors .monitor-help li { display: list-item; padding: 0; background: none; border: 0; border-radius: 0; }
+
+.monitor-crawl { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.monitor-pages { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow: auto; }
+.monitor-pages li { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 0.78rem; }
+.monitor-pages a { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.monitor-pages .mono { font-family: var(--mono); font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.monitor-pages small { flex: none; }
