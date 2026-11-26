@@ -8,7 +8,7 @@ import { tokenTotals } from './tokenLog.js';
 import { setAgentProvider, getAgentProvider } from './agentSettings.js';
 import { getAgentUsage } from './agentUsage.js';
 import { readCodexAccount } from './codexAccount.js';
-import { getLoginSettings, saveLoginSettings, enableEnvLogin, removeLoginSettings, performLogin, prepareSession, forgetSession, answerChallenge } from './login.js';
+import { getLoginSettings, saveLoginSettings, enableEnvLogin, removeLoginSettings, performLogin, prepareSession, forgetSession, logout, answerChallenge } from './login.js';
 import {
   readJson,
   writeJson,
@@ -36,6 +36,7 @@ import { capturePage, scanForTests, VIEWPORTS } from './capture.js';
 import { getViewports, setViewports, loadViewports, isViewportName } from './viewports.js';
 import { parseFigmaUrl, withScheme } from './figma.js';
 import { fixConnection, getJobs, signOutAll, browserStatus, cancelOtherAgentLogins } from './connections.js';
+import { getMonitor, addSite, removeSite, runSite, answerMonitorChallenge } from './monitor.js';
 import { verifyScript, readTests, readGlobalTests, generateTests, runTests, runGlobalTests, rerunFailedTests, sameSite, saveScript } from './tests.js';
 
 const app = express();
@@ -837,10 +838,13 @@ app.get('/api/tickets/:key/login', async (req, res) => {
   res.json(await getLoginSettings(key));
 });
 
-// { useEnv: true } turns on the .env test account ("Requires login"); otherwise saves this ticket's own account.
+// { useEnv: true, profile } turns on an .env test account ("Requires login"); otherwise saves this ticket's own account.
 app.put('/api/tickets/:key/login', async (req, res) => {
   const { key } = await requireTicket(req.params.key);
-  res.json(req.body?.useEnv ? await enableEnvLogin(key) : await saveLoginSettings(key, req.body || {}));
+  if (!req.body?.useEnv) return res.json(await saveLoginSettings(key, req.body || {}));
+  // profile: an .env account name (PROJECT_<NAME>_*), or null / absent for the default PROJECT_* account.
+  const profile = req.body.profile ? String(req.body.profile) : null;
+  res.json(await enableEnvLogin(key, { profile }));
 });
 
 app.delete('/api/tickets/:key/login', async (req, res) => {
@@ -860,6 +864,12 @@ app.post('/api/tickets/:key/login/challenge', async (req, res) => {
   const { key } = await requireTicket(req.params.key);
   answerChallenge(key, String(req.body?.id || ''), req.body?.value ?? null);
   res.json(await getLoginSettings(key));
+});
+
+// Logs out: clicks the site's "Log out" with the saved session (best effort), then deletes the session.
+app.post('/api/tickets/:key/login/logout', async (req, res) => {
+  const { key, pageUrl } = await requireTicket(req.params.key);
+  res.json(await once(`login:${key}`, () => logout(key, pageUrl)));
 });
 
 // Signs in once to test the settings (a site with an OTP or CAPTCHA asks for it in the app). No AI, no tokens.
@@ -955,6 +965,33 @@ app.post('/api/tickets/:key/improvements', async (req, res) => {
     });
   });
   res.json({ data });
+});
+
+// ---- Monitoring: website URLs checked for console errors, exceptions and failed requests (no AI) ----
+app.get('/api/monitor', async (_req, res) => {
+  res.json(await getMonitor());
+});
+
+app.post('/api/monitor/sites', async (req, res) => {
+  await addSite({ url: req.body.url, profile: String(req.body.profile || 'none') });
+  res.status(201).json(await getMonitor());
+});
+
+app.post('/api/monitor/sites/:id/run', async (req, res) => {
+  const { sites } = await getMonitor();
+  if (!sites.some((s) => s.id === req.params.id)) throw httpError(404, 'This site is no longer monitored.');
+  runSite(req.params.id);
+  res.json(await getMonitor());
+});
+
+app.delete('/api/monitor/sites/:id', async (req, res) => {
+  await removeSite(req.params.id);
+  res.json(await getMonitor());
+});
+
+app.post('/api/monitor/challenge', async (req, res) => {
+  answerMonitorChallenge(String(req.body.profile || ''), req.body.id, req.body.value ?? null);
+  res.json(await getMonitor());
 });
 
 app.use((err, _req, res, _next) => {
